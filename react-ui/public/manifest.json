@@ -1,6 +1,6 @@
 {
-  "short_name": "Election XML",
-  "name": "Google sheets Election XML Converter",
+  "short_name": "NWS XML",
+  "name": "National Weather Service XML Converter",
   "icons": [
     {
       "src": "favicon.ico",

@@ -5,10 +5,11 @@ import './styles.css';
 function App() {
   const [urlConfig, setUrlConfig] = useState([]);
   const [pollInterval, setPollInterval] = useState(60);
-  const [newUrl, setNewUrl] = useState('');
+  const [newLatitude, setNewLatitude] = useState('');
+  const [newLongitude, setNewLongitude] = useState('');
   const [newName, setNewName] = useState('');
-  const [newKey, setNewKey] = useState('');
 
+  // Fetch the current configuration when the component loads
   useEffect(() => {
     axios.get('/api/config')
       .then(response => {
@@ -18,29 +19,32 @@ function App() {
       .catch(error => console.error('Error fetching config:', error));
   }, []);
 
+  // Handle manual refresh
   const handleRefresh = (e) => {
     e.preventDefault();
-    axios.post('/api/refresh', {  })
-    .catch(error => console.error('Error updating config:', error));
+    axios.post('/api/refresh', {})
+      .catch(error => console.error('Error refreshing data:', error));
   };
 
+  // Handle adding a new location
   const handleSubmit = (e) => {
     e.preventDefault();
     axios.post('/api/config', {
-      url: newUrl,
+      latitude: newLatitude,
+      longitude: newLongitude,
       name: newName,
-      key: newKey,
       pollInterval: pollInterval * 1000
     })
     .then(response => {
       setUrlConfig(response.data.urlConfig);
-      setNewUrl('');
+      setNewLatitude('');
+      setNewLongitude('');
       setNewName('');
-      setNewKey('');
     })
     .catch(error => console.error('Error updating config:', error));
   };
 
+  // Handle setting the refresh interval
   const handleSetRefresh = (e) => {
     e.preventDefault();
     axios.post('/api/setRefresh', {
@@ -48,46 +52,64 @@ function App() {
     })
     .then(response => {
       setUrlConfig(response.data.urlConfig);
-      setNewUrl('');
     })
-    .catch(error => console.error('Error updating config:', error));
+    .catch(error => console.error('Error updating refresh interval:', error));
   };
 
-  const handleDelete = (url) => {
-    axios.delete('/api/config', { data: { url } })
+  // Handle deleting a location configuration
+  const handleDelete = (name) => {
+    axios.delete('/api/config', { data: { name } })
       .then(response => {
         setUrlConfig(response.data.urlConfig);
       })
-      .catch(error => console.error('Error deleting URL:', error));
+      .catch(error => console.error('Error deleting location:', error));
   };
 
   return (
     <div className="container">
+      {/* Manual refresh button */}
       <form>
-        <button onClick={(e) => handleRefresh(e)}>Refresh</button>
+        <button onClick={handleRefresh}>Refresh</button>
       </form>
 
-      <h3>Configured Elections</h3>
+      {/* List of configured locations */}
+      <h3>Configured Locations</h3>
       <ul>
         {urlConfig.map((entry, index) => (
           <li key={index}>
             <strong>Name:</strong> {entry.name} <br />
-            <button onClick={() => handleDelete(entry.url)}>Delete</button>
+            <strong>Latitude:</strong> {entry.latitude} <br />
+            <strong>Longitude:</strong> {entry.longitude} <br />
+            <button onClick={() => handleDelete(entry.name)}>Delete</button>
           </li>
         ))}
       </ul>
 
       <br />
 
-      <h3>Configure New Google Sheet</h3>
+      {/* Form to configure a new location */}
+      <h3>Configure New Location</h3>
       <form onSubmit={handleSubmit}>
         <div>
           <label>
-            New URL:
+            Latitude:
             <input
-              type="url"
-              value={newUrl}
-              onChange={(e) => setNewUrl(e.target.value)}
+              type="number"
+              step="any"
+              value={newLatitude}
+              onChange={(e) => setNewLatitude(e.target.value)}
+              required
+            />
+          </label>
+        </div>
+        <div>
+          <label>
+            Longitude:
+            <input
+              type="number"
+              step="any"
+              value={newLongitude}
+              onChange={(e) => setNewLongitude(e.target.value)}
               required
             />
           </label>
@@ -103,20 +125,10 @@ function App() {
             />
           </label>
         </div>
-        <div>
-          <label>
-            Google API Key:
-            <input
-              type="text"
-              value={newKey}
-              onChange={(e) => setNewKey(e.target.value)}
-              required
-            />
-          </label>
-        </div>
         <button type="submit">Add</button>
       </form>
 
+      {/* Form to change the refresh interval */}
       <h3>Change Refresh Time</h3>
       <form onSubmit={handleSetRefresh}>
         <div>

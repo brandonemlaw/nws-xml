@@ -230,7 +230,7 @@ import Store from 'electron-store';
 
           // Convert temperatures to Fahrenheit
           const dayTemperatureF = convertCtoF(dayPeriod.temperature, dayPeriod.temperatureUnit);
-          const nightTemperatureF = convertCtoF(nightPeriod.temperature, dayPeriod.temperatureUnit);
+          const nightTemperatureF = convertCtoF(nightPeriod.temperature, dayPeriod.temperatureUnit );
 
           // Merge day and night into a single daily forecast entry
           dailyForecast[sanitizedAbsoluteTime] = {

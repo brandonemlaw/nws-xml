@@ -1,0 +1,40 @@
+{
+  "name": "google-sheets-election-xml-converter",
+  "version": "1.0.2",
+  "description": "",
+  "type": "module",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "electron .",
+    "postinstall": "electron-builder install-app-deps",
+    "release": "electron-builder --mac --windows --linux --publish always",
+    "publishwin": "electron-builder --win --config --ia32"
+  },
+  "build": {
+    "appId": "google-sheets-election-xml-converter",
+    "mac": {
+      "category": "productivity"
+    },
+    "directories": {
+      "buildResources": "resources",
+      "output": "release"
+    }
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "dmg-license": "^1.0.11",
+    "electron-store": "^10.0.0",
+    "express": "^4.21.0",
+    "googleapis": "^144.0.0",
+    "node-fetch": "^3.3.2",
+    "xml2js": "^0.6.2"
+  },
+  "devDependencies": {
+    "electron": "^32.1.2",
+    "electron-builder": "^25.1.8"
+  }
+}

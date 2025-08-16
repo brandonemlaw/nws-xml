@@ -1040,6 +1040,12 @@ const require = createRequire(import.meta.url);
         const page = await browser.newPage();
         await page.setViewport({ width: 1200, height: 800 });
         
+        // Set page background to transparent
+        await page.evaluateOnNewDocument(() => {
+          document.documentElement.style.background = 'transparent';
+          document.body.style.background = 'transparent';
+        });
+        
         // Set a user agent to avoid being blocked
         await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
         
@@ -1083,32 +1089,66 @@ const require = createRequire(import.meta.url);
           throw new Error(`Failed to load Arkansas burn ban page after ${maxRetries} attempts: ${lastError.message}`);
         }
         
-        // Look for any canvas or map elements that might contain the burn ban image
-        const mapElement = await page.$('#section-to-print, .map-container, canvas, [id*="map"], [class*="map"]') || 
-                           await page.$('body');
+        // Look specifically for the img-fluid image within section-to-print
+        const imageElement = await page.$('#section-to-print .img-fluid');
         
-        if (mapElement) {
+        if (imageElement) {
           const filename = 'Arkansas_Burn_Ban.png';
           const filePath = path.join(userDocumentsPath, 'ForecastImages', filename);
           
           // Ensure the directory exists
           await fs.mkdir(path.dirname(filePath), { recursive: true });
           
-          // Take a screenshot of the map element
-          await mapElement.screenshot({ 
-            path: filePath,
-            type: 'png'
-          });
-          
-          // Verify the file was created and has reasonable size
-          const stats = await fs.stat(filePath);
-          if (stats.size < 1024) { // Less than 1KB indicates likely failure
-            throw new Error('Screenshot file is too small, likely capture failed');
+          try {
+            // First try to get the image source URL and download it directly
+            const imageSrc = await imageElement.evaluate(img => img.src);
+            
+            if (imageSrc && imageSrc.startsWith('http')) {
+              console.log(`Downloading Arkansas burn ban image directly from: ${imageSrc}`);
+              
+              const response = await fetch(imageSrc, {
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+                }
+              });
+              
+              if (response.ok) {
+                const buffer = await response.buffer();
+                await fs.writeFile(filePath, buffer);
+                
+                // Verify the file was created and has reasonable size
+                const stats = await fs.stat(filePath);
+                if (stats.size < 1024) {
+                  throw new Error('Downloaded image file is too small, likely capture failed');
+                }
+                
+                console.log(`Arkansas burn ban map downloaded successfully to: ${filePath} (${Math.round(stats.size / 1024)}KB)`);
+              } else {
+                throw new Error(`Failed to download image: ${response.status} ${response.statusText}`);
+              }
+            } else {
+              throw new Error('Image source URL not found or invalid');
+            }
+          } catch (downloadError) {
+            console.warn(`Direct download failed: ${downloadError.message}, falling back to screenshot`);
+            
+            // Fallback to screenshot with transparent background
+            await imageElement.screenshot({ 
+              path: filePath,
+              type: 'png',
+              omitBackground: true
+            });
+            
+            // Verify the file was created and has reasonable size
+            const stats = await fs.stat(filePath);
+            if (stats.size < 1024) {
+              throw new Error('Screenshot file is too small, likely capture failed');
+            }
+            
+            console.log(`Arkansas burn ban map captured via screenshot to: ${filePath} (${Math.round(stats.size / 1024)}KB)`);
           }
-          
-          console.log(`Arkansas burn ban map saved successfully to: ${filePath} (${Math.round(stats.size / 1024)}KB)`);
         } else {
-          throw new Error('Could not find any suitable elements to capture on Arkansas burn ban page');
+          throw new Error('Could not find the img-fluid image within section-to-print on Arkansas burn ban page');
         }
         
       } catch (error) {

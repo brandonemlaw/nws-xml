@@ -8,6 +8,10 @@ function App() {
   const [newLatitude, setNewLatitude] = useState('');
   const [newLongitude, setNewLongitude] = useState('');
   const [newName, setNewName] = useState('');
+  const [imageConfig, setImageConfig] = useState([]);
+  const [imagePollInterval, setImagePollInterval] = useState(1800);
+  const [newImageUrl, setNewImageUrl] = useState('');
+  const [newImageName, setNewImageName] = useState('');
 
   // Fetch the current configuration when the component loads
   useEffect(() => {
@@ -15,6 +19,8 @@ function App() {
       .then(response => {
         setUrlConfig(response.data.urlConfig);
         setPollInterval(response.data.pollInterval / 1000);
+        setImageConfig(response.data.imageConfig || []);
+        setImagePollInterval((response.data.imagePollInterval || 1800000) / 1000);
       })
       .catch(error => console.error('Error fetching config:', error));
   }, []);
@@ -65,11 +71,55 @@ function App() {
       .catch(error => console.error('Error deleting location:', error));
   };
 
+  // Handle manual image refresh
+  const handleImageRefresh = (e) => {
+    e.preventDefault();
+    axios.post('/api/refreshImages', {})
+      .catch(error => console.error('Error refreshing images:', error));
+  };
+
+  // Handle adding a new image
+  const handleImageSubmit = (e) => {
+    e.preventDefault();
+    axios.post('/api/imageConfig', {
+      url: newImageUrl,
+      name: newImageName
+    })
+    .then(response => {
+      setImageConfig(response.data.imageConfig);
+      setNewImageUrl('');
+      setNewImageName('');
+    })
+    .catch(error => console.error('Error updating image config:', error));
+  };
+
+  // Handle setting the image refresh interval
+  const handleSetImageRefresh = (e) => {
+    e.preventDefault();
+    axios.post('/api/setImageRefresh', {
+      imagePollInterval: imagePollInterval * 1000
+    })
+    .then(response => {
+      setImageConfig(response.data.imageConfig);
+    })
+    .catch(error => console.error('Error updating image refresh interval:', error));
+  };
+
+  // Handle deleting an image configuration
+  const handleImageDelete = (name) => {
+    axios.delete('/api/imageConfig', { data: { name } })
+      .then(response => {
+        setImageConfig(response.data.imageConfig);
+      })
+      .catch(error => console.error('Error deleting image:', error));
+  };
+
   return (
     <div className="container">
       {/* Manual refresh button */}
       <form>
-        <button onClick={handleRefresh}>Refresh</button>
+        <button onClick={handleRefresh}>Refresh Weather Data</button>
+        <button onClick={handleImageRefresh}>Refresh Images</button>
       </form>
 
       {/* List of configured locations */}
@@ -125,11 +175,11 @@ function App() {
             />
           </label>
         </div>
-        <button type="submit">Add</button>
+        <button type="submit">Add Location</button>
       </form>
 
       {/* Form to change the refresh interval */}
-      <h3>Change Refresh Time</h3>
+      <h3>Change Weather Refresh Time</h3>
       <form onSubmit={handleSetRefresh}>
         <div>
           <label>
@@ -138,6 +188,65 @@ function App() {
               type="number"
               value={pollInterval}
               onChange={(e) => setPollInterval(e.target.value)}
+              required
+            />
+          </label>
+          <button type="submit">Save</button>
+        </div>
+      </form>
+
+      {/* List of configured images */}
+      <h3>Configured Images</h3>
+      <ul>
+        {imageConfig.map((entry, index) => (
+          <li key={index}>
+            <strong>Name:</strong> {entry.name} <br />
+            <strong>URL:</strong> {entry.url} <br />
+            <button onClick={() => handleImageDelete(entry.name)}>Delete</button>
+          </li>
+        ))}
+      </ul>
+
+      <br />
+
+      {/* Form to configure a new image */}
+      <h3>Configure New Image</h3>
+      <form onSubmit={handleImageSubmit}>
+        <div>
+          <label>
+            Image URL:
+            <input
+              type="url"
+              value={newImageUrl}
+              onChange={(e) => setNewImageUrl(e.target.value)}
+              required
+            />
+          </label>
+        </div>
+        <div>
+          <label>
+            Image Name:
+            <input
+              type="text"
+              value={newImageName}
+              onChange={(e) => setNewImageName(e.target.value)}
+              required
+            />
+          </label>
+        </div>
+        <button type="submit">Add Image</button>
+      </form>
+
+      {/* Form to change the image refresh interval */}
+      <h3>Change Image Refresh Time</h3>
+      <form onSubmit={handleSetImageRefresh}>
+        <div>
+          <label>
+            Image Refresh Time (seconds):
+            <input
+              type="number"
+              value={imagePollInterval}
+              onChange={(e) => setImagePollInterval(e.target.value)}
               required
             />
           </label>

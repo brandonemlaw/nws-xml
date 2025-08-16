@@ -20,23 +20,37 @@ import Store from 'electron-store';
     const store = new Store();
     let urlConfig = store.get('urlConfig', []);
     let pollInterval = store.get('pollInterval', 60000);
+    let imageConfig = store.get('imageConfig', []);
+    let imagePollInterval = store.get('imagePollInterval', 1800000); // Default 30 minutes
 
     server.use(bodyParser.json());
     server.use(express.static(path.join(__dirname, 'react-ui', 'build')));
 
     server.get('/api/config', (req, res) => {
-      res.json({ urlConfig, pollInterval });
+      res.json({ urlConfig, pollInterval, imageConfig, imagePollInterval });
     });
 
     server.post('/api/setRefresh', async (req, res) => {
       pollInterval = req.body.pollInterval;
       store.set('pollInterval', pollInterval);
-      res.json({ message: 'Polling interval updated', urlConfig });
+      res.json({ message: 'Polling interval updated', urlConfig, imageConfig });
       startPolling();
+    });
+
+    server.post('/api/setImageRefresh', async (req, res) => {
+      imagePollInterval = req.body.imagePollInterval;
+      store.set('imagePollInterval', imagePollInterval);
+      res.json({ message: 'Image polling interval updated', imageConfig });
+      startImagePolling();
     });
 
     server.post('/api/refresh', (req, res) => {
       poll();
+      res.status(200).send();
+    });
+
+    server.post('/api/refreshImages', (req, res) => {
+      pollImages();
       res.status(200).send();
     });
 
@@ -53,6 +67,21 @@ import Store from 'electron-store';
       urlConfig = urlConfig.filter(entry => entry.name !== name);
       store.set('urlConfig', urlConfig);
       res.json({ message: 'Location deleted', urlConfig });
+    });
+
+    server.post('/api/imageConfig', async (req, res) => {
+      const { url, name } = req.body;
+      imageConfig = [...imageConfig, { url, name }];
+      store.set('imageConfig', imageConfig);
+      res.json({ message: 'Image configuration updated', imageConfig });
+      startImagePolling();
+    });
+
+    server.delete('/api/imageConfig', (req, res) => {
+      const { name } = req.body;
+      imageConfig = imageConfig.filter(entry => entry.name !== name);
+      store.set('imageConfig', imageConfig);
+      res.json({ message: 'Image deleted', imageConfig });
     });
 
     // Utility to convert Celsius to Fahrenheit
@@ -548,6 +577,67 @@ import Store from 'electron-store';
       });
     }
 
+    async function downloadImage(url, filename) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`Error downloading image: ${response.statusText}`);
+        }
+        
+        const buffer = await response.buffer();
+        const imagePath = path.join(userDocumentsPath, 'NWSForecastImages', filename);
+        
+        // Ensure directory exists
+        await fs.mkdir(path.dirname(imagePath), { recursive: true });
+        
+        // Write image file
+        await fs.writeFile(imagePath, buffer);
+        console.log(`Image downloaded to ${imagePath}`);
+        return true;
+      } catch (error) {
+        console.error(`Error downloading image from ${url}:`, error);
+        return false;
+      }
+    }
+
+    async function pollImages() {
+      if (imageConfig.length === 0) return;
+
+      console.log('Polling images...');
+      
+      for (const entry of imageConfig) {
+        const { url, name } = entry;
+        try {
+          // Determine file extension from URL or default to .jpg
+          const urlParts = url.split('.');
+          const extension = urlParts.length > 1 ? '.' + urlParts.pop() : '.jpg';
+          const filename = name + extension;
+          
+          await downloadImage(url, filename);
+        } catch (error) {
+          console.error(`Error processing image ${name}:`, error);
+        }
+      }
+      
+      setTimeout(pollImages, imagePollInterval);
+    }
+
+    async function startImagePolling() {
+      if (imageConfig.length === 0) {
+        console.log("No images configured for polling.");
+        return;
+      }
+
+      console.log("Starting image polling with an interval of", imagePollInterval, "milliseconds.");
+
+      setTimeout(pollImages, imagePollInterval);
+
+      // Immediately call the polling function the first time
+      pollImages().catch(error => {
+        console.error('Image polling error:', error);
+      });
+    }
+
     app.on('ready', () => {
       console.log('Electron app is ready.');
 
@@ -566,6 +656,7 @@ import Store from 'electron-store';
 
       win.loadURL(`http://localhost:${PORT}`);
       startPolling();
+      startImagePolling();
     });
 
     app.on('window-all-closed', () => {

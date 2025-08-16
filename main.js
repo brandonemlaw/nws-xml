@@ -9,6 +9,9 @@ import { fileURLToPath } from 'url';
 import Store from 'electron-store';
 import os from 'os';
 import puppeteer from 'puppeteer';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
 
 (async () => {
   try {
@@ -130,6 +133,105 @@ import puppeteer from 'puppeteer';
         generateGraphicNamesXML();
       } else {
         res.status(400).json({ error: 'Invalid index' });
+      }
+    });
+
+    server.get('/api/exportConfig', (req, res) => {
+      try {
+        const exportData = {
+          exportVersion: '1.0',
+          exportDate: new Date().toISOString(),
+          appVersion: require('./package.json').version,
+          configuration: {
+            urlConfig,
+            pollInterval,
+            imageConfig,
+            imagePollInterval,
+            enableArkansasBurnBan,
+            graphicNameTemplates
+          }
+        };
+        
+        // Set headers for file download
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', `attachment; filename="nws-xml-config-${new Date().toISOString().split('T')[0]}.json"`);
+        
+        res.json(exportData);
+        console.log('Configuration exported successfully');
+      } catch (error) {
+        console.error('Error exporting configuration:', error);
+        res.status(500).json({ error: 'Failed to export configuration' });
+      }
+    });
+
+    server.post('/api/importConfig', (req, res) => {
+      try {
+        const importData = req.body;
+        
+        // Validate import data structure
+        if (!importData || !importData.configuration) {
+          return res.status(400).json({ error: 'Invalid configuration file format' });
+        }
+        
+        const config = importData.configuration;
+        
+        // Validate required fields and apply with fallbacks
+        if (Array.isArray(config.urlConfig)) {
+          urlConfig = config.urlConfig;
+          store.set('urlConfig', urlConfig);
+        }
+        
+        if (typeof config.pollInterval === 'number' && config.pollInterval > 0) {
+          pollInterval = config.pollInterval;
+          store.set('pollInterval', pollInterval);
+        }
+        
+        if (Array.isArray(config.imageConfig)) {
+          imageConfig = config.imageConfig;
+          store.set('imageConfig', imageConfig);
+        }
+        
+        if (typeof config.imagePollInterval === 'number' && config.imagePollInterval > 0) {
+          imagePollInterval = config.imagePollInterval;
+          store.set('imagePollInterval', imagePollInterval);
+        }
+        
+        if (typeof config.enableArkansasBurnBan === 'boolean') {
+          enableArkansasBurnBan = config.enableArkansasBurnBan;
+          store.set('enableArkansasBurnBan', enableArkansasBurnBan);
+        }
+        
+        if (Array.isArray(config.graphicNameTemplates)) {
+          graphicNameTemplates = config.graphicNameTemplates;
+          store.set('graphicNameTemplates', graphicNameTemplates);
+        }
+        
+        // Restart polling with new configuration
+        startPolling();
+        startImagePolling();
+        
+        // Generate graphic names if templates were imported
+        if (graphicNameTemplates.length > 0) {
+          generateGraphicNamesXML();
+        }
+        
+        res.json({ 
+          message: 'Configuration imported successfully',
+          importedData: {
+            locations: urlConfig.length,
+            images: imageConfig.length,
+            graphicTemplates: graphicNameTemplates.length,
+            arkansasBurnBan: enableArkansasBurnBan,
+            pollInterval,
+            imagePollInterval
+          }
+        });
+        
+        console.log(`Configuration imported successfully: ${urlConfig.length} locations, ${imageConfig.length} images, ${graphicNameTemplates.length} graphic templates`);
+        
+      } catch (error) {
+        console.error('Error importing configuration:', error);
+        res.status(500).json({ error: 'Failed to import configuration: ' + error.message });
       }
     });
 

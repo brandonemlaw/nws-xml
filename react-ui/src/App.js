@@ -18,6 +18,7 @@ function App() {
   const [graphicNameTemplates, setGraphicNameTemplates] = useState([]);
   const [newDayNumber, setNewDayNumber] = useState('');
   const [newNameTemplate, setNewNameTemplate] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
 
   // Fetch the current configuration when the component loads
   useEffect(() => {
@@ -223,6 +224,91 @@ function App() {
         console.error('Error deleting graphic name template:', error);
         showError('Failed to delete graphic name template');
       });
+  };
+
+  // Handle configuration export
+  const handleExportConfig = () => {
+    axios.get('/api/exportConfig', { responseType: 'blob' })
+      .then(response => {
+        // Create blob link to download the file
+        const url = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement('a');
+        link.href = url;
+        
+        // Generate filename with current date
+        const date = new Date().toISOString().split('T')[0];
+        link.setAttribute('download', `nws-xml-config-${date}.json`);
+        
+        // Append to body and click
+        document.body.appendChild(link);
+        link.click();
+        
+        // Clean up
+        link.remove();
+        window.URL.revokeObjectURL(url);
+        
+        showSuccess('Configuration exported successfully');
+      })
+      .catch(error => {
+        console.error('Error exporting configuration:', error);
+        showError('Failed to export configuration');
+      });
+  };
+
+  // Handle configuration import
+  const handleImportConfig = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    if (!file.name.endsWith('.json')) {
+      showError('Please select a JSON configuration file');
+      return;
+    }
+    
+    setIsImporting(true);
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const configData = JSON.parse(e.target.result);
+        
+        axios.post('/api/importConfig', configData)
+          .then(response => {
+            const imported = response.data.importedData;
+            
+            // Refresh the UI with new data
+            axios.get('/api/config')
+              .then(configResponse => {
+                setUrlConfig(configResponse.data.urlConfig);
+                setPollInterval(configResponse.data.pollInterval / 1000);
+                setImageConfig(configResponse.data.imageConfig || []);
+                setImagePollInterval((configResponse.data.imagePollInterval || 1800000) / 1000);
+                setEnableArkansasBurnBan(configResponse.data.enableArkansasBurnBan || false);
+                setGraphicNameTemplates(configResponse.data.graphicNameTemplates || []);
+                
+                showSuccess(`Configuration imported: ${imported.locations} locations, ${imported.images} images, ${imported.graphicTemplates} graphic templates`);
+              });
+          })
+          .catch(error => {
+            console.error('Error importing configuration:', error);
+            const errorMsg = error.response?.data?.error || 'Failed to import configuration';
+            showError(errorMsg);
+          })
+          .finally(() => {
+            setIsImporting(false);
+            // Reset the file input
+            event.target.value = '';
+          });
+          
+      } catch (parseError) {
+        console.error('Error parsing configuration file:', parseError);
+        showError('Invalid JSON file format');
+        setIsImporting(false);
+        event.target.value = '';
+      }
+    };
+    
+    reader.readAsText(file);
   };
 
   return (
@@ -480,6 +566,69 @@ function App() {
         <p style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
           Automatically captures and saves the Arkansas burn ban map image every refresh cycle.
         </p>
+      </div>
+
+      {/* Configuration Import/Export Section */}
+      <h3>Configuration Management</h3>
+      <p style={{ fontSize: '14px', color: '#666', marginBottom: '15px' }}>
+        Export your current configuration to a file or import a configuration from another computer to keep settings in sync.
+      </p>
+      
+      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <button 
+          onClick={handleExportConfig}
+          style={{ 
+            backgroundColor: '#2e7d32', 
+            color: 'white',
+            padding: '8px 16px',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: 'pointer'
+          }}
+        >
+          📥 Export Configuration
+        </button>
+        
+        <label style={{ 
+          backgroundColor: '#1976d2', 
+          color: 'white',
+          padding: '8px 16px',
+          borderRadius: '4px',
+          cursor: 'pointer',
+          display: 'inline-block'
+        }}>
+          📤 Import Configuration
+          <input
+            type="file"
+            accept=".json"
+            onChange={handleImportConfig}
+            style={{ display: 'none' }}
+            disabled={isImporting}
+          />
+        </label>
+        
+        {isImporting && (
+          <span style={{ color: '#666', fontSize: '14px' }}>
+            Importing configuration...
+          </span>
+        )}
+      </div>
+      
+      <div style={{ 
+        backgroundColor: '#f5f5f5', 
+        padding: '10px', 
+        borderRadius: '4px', 
+        marginTop: '10px',
+        fontSize: '12px',
+        color: '#666'
+      }}>
+        <strong>Note:</strong> Importing a configuration will replace all current settings including:
+        <ul style={{ margin: '5px 0', paddingLeft: '20px' }}>
+          <li>Weather locations and refresh intervals</li>
+          <li>Image sources and polling settings</li>
+          <li>Graphic name templates</li>
+          <li>Arkansas burn ban setting</li>
+        </ul>
       </div>
     </div>
   );

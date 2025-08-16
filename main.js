@@ -850,8 +850,10 @@ const require = createRequire(import.meta.url);
     function getDayName(dayNumber) {
       const today = new Date();
       const targetDate = new Date(today);
-      targetDate.setDate(today.getDate() + dayNumber);
-      
+      // Day 1 => today, Day 2 => +1 day, Day 3 => +2 days; keep 0 => today
+      const offset = dayNumber > 0 ? dayNumber - 1 : 0;
+      targetDate.setDate(today.getDate() + offset);
+
       const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
       return dayNames[targetDate.getDay()];
     }

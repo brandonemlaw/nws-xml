@@ -275,9 +275,9 @@ const require = createRequire(import.meta.url);
 
     // Utility to format precipitation percentage (hide if less than 15%)
     function formatPrecipitationPercentage(value) {
-      if (!value && value !== 0) return " ";
+      if (!value && value !== 0) return "⠀";
       const numValue = typeof value === 'number' ? value : parseInt(value);
-      if (isNaN(numValue) || numValue < 15) return " ";
+      if (isNaN(numValue) || numValue < 15) return "⠀";
       return `${numValue}%`;
     }
 

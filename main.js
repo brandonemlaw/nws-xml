@@ -236,15 +236,33 @@ const require = createRequire(import.meta.url);
     });
 
     // Utility to convert Celsius to Fahrenheit
-    function convertCtoF(valueWithUnit) {
-      // Check if the input contains 'C'
-      if (typeof valueWithUnit === 'string' && valueWithUnit.trim().endsWith('C')) {
-        // Extract the numeric part and convert to Fahrenheit
-        const celsius = parseFloat(valueWithUnit);
-        return (celsius * 9 / 5) + 32; // Remove 'F' suffix
+    function convertCtoF(value, unit) {
+      // Accept numbers or strings; unit may be 'C' or 'F'
+      if (value === null || value === undefined) return value;
+
+      const isNumber = typeof value === 'number';
+      const isString = typeof value === 'string';
+
+      // Extract numeric part if string
+      let num = isNumber ? value : (isString ? parseFloat(value) : NaN);
+      if (isNaN(num)) return value;
+
+      const unitUpper = unit ? String(unit).toUpperCase() : undefined;
+      const inferC = isString && value.trim().toUpperCase().endsWith('C');
+
+      if (unitUpper === 'C' || inferC) {
+        return (num * 9 / 5) + 32;
       }
-      // If it's not in Celsius or the format is wrong, return the input as is
-      return valueWithUnit;
+      // Assume already Fahrenheit
+      return num;
+    }
+
+    // Format a value as Fahrenheit degrees with the degree symbol
+    function formatDegreesF(value, unit) {
+      const fVal = convertCtoF(value, unit);
+      const n = Number(fVal);
+      if (fVal === null || fVal === undefined || Number.isNaN(n)) return '';
+      return `${Math.round(n)}°`;
     }
 
     // Sanitize XML tag names by removing spaces and invalid characters
@@ -411,8 +429,8 @@ const require = createRequire(import.meta.url);
         const relativeTime = calcRelativeTime(startTime, index);
         const absoluteTime = formatAbsoluteTimeForHourly(startTime, period.name);
 
-        // Convert temperature to Fahrenheit
-        const temperatureF = convertCtoF(period.temperature, period.temperatureUnit);
+        // Convert temperature to Fahrenheit and add degree symbol
+        const temperatureDeg = formatDegreesF(period.temperature, period.temperatureUnit);
 
         // Sanitize the time labels for XML tag names
         const sanitizedAbsoluteTime = sanitizeXmlTagName(absoluteTime);
@@ -420,8 +438,8 @@ const require = createRequire(import.meta.url);
 
         // Add both absolute and relative versions to the forecast
         hourlyForecast[sanitizedAbsoluteTime] = {
-          StartTime: period.name, // Use the NWS-provided human-readable name
-          Temperature: temperatureF,
+          StartTime: period.name,
+          Temperature: temperatureDeg,
           TemperatureUnit: 'F',
           WindSpeed: period.windSpeed,
           WindDirection: period.windDirection,
@@ -430,8 +448,8 @@ const require = createRequire(import.meta.url);
         };
 
         hourlyForecast[sanitizedRelativeTime] = {
-          StartTime: period.name, // Use the NWS-provided human-readable name
-          Temperature: temperatureF,
+          StartTime: period.name,
+          Temperature: temperatureDeg,
           TemperatureUnit: 'F',
           WindSpeed: period.windSpeed,
           WindDirection: period.windDirection,
@@ -460,23 +478,24 @@ const require = createRequire(import.meta.url);
           const dayPeriod = periods[i];
           const nightPeriod = periods[i + 1];
 
-          // Ensure that dayPeriod is actually a daytime forecast and nightPeriod is nighttime
           if (dayPeriod.isDaytime && !nightPeriod.isDaytime) {
-              // Increment the day counter for each full day (day + night)
               dayCounter++;
 
               const dayStartTime = new Date(dayPeriod.startTime);
               const dayAbsoluteTime = formatAbsoluteTimeForDaily(dayStartTime, dayPeriod.name);
               const sanitizedAbsoluteTime = sanitizeXmlTagName(dayAbsoluteTime);
 
-              // Convert temperatures to Fahrenheit
-              const dayTemperatureF = convertCtoF(dayPeriod.temperature, dayPeriod.temperatureUnit);
-              const nightTemperatureF = convertCtoF(nightPeriod.temperature, dayPeriod.temperatureUnit);
+              // Temperatures as Fahrenheit with degree symbol
+              const dayTemperatureStr = formatDegreesF(dayPeriod.temperature, dayPeriod.temperatureUnit);
+              const nightTemperatureStr = formatDegreesF(nightPeriod.temperature, nightPeriod.temperatureUnit);
 
-              // Combine PoP (Probability of Precipitation) by taking the maximum of day and night
-              const dayPoP = dayPeriod.probabilityOfPrecipitation ? dayPeriod.probabilityOfPrecipitation.value : 0;
-              const nightPoP = nightPeriod.probabilityOfPrecipitation ? nightPeriod.probabilityOfPrecipitation.value : 0;
+              // Combine PoP (Probability of Precipitation) - max of day/night, hide if < 15%
+              const dayPoP = dayPeriod.probabilityOfPrecipitation && typeof dayPeriod.probabilityOfPrecipitation.value === 'number'
+                ? dayPeriod.probabilityOfPrecipitation.value : 0;
+              const nightPoP = nightPeriod.probabilityOfPrecipitation && typeof nightPeriod.probabilityOfPrecipitation.value === 'number'
+                ? nightPeriod.probabilityOfPrecipitation.value : 0;
               const maxPoP = Math.max(dayPoP, nightPoP);
+              const chanceStr = maxPoP >= 15 ? `${maxPoP}%` : '';
 
               // Combine Wind Speed by taking the stronger wind
               const dayWindSpeed = extractWindSpeed(dayPeriod.windSpeed);
@@ -488,18 +507,18 @@ const require = createRequire(import.meta.url);
 
               const forecastData = {
                   StartTime: dayPeriod.name, // Human-readable day name
-                  HighTemperature: dayTemperatureF,
-                  LowTemperature: nightTemperatureF,
+                  HighTemperature: dayTemperatureStr,
+                  LowTemperature: nightTemperatureStr,
                   TemperatureUnit: 'F',
                   WindSpeed: `${maxWindSpeed} mph`,
                   WindDirection: windDirection, // Strongest wind direction
-                  ChanceOfPrecipitation: `${maxPoP}%`, // Strongest PoP
+                  ChanceOfPrecipitation: chanceStr,
                   DayDetailedForecast: dayPeriod.detailedForecast,
                   NightDetailedForecast: nightPeriod.detailedForecast,
-                  DayShortForecast: dayPeriod.shortForecast, // Add short forecast (day)
-                  NightShortForecast: nightPeriod.shortForecast, // Add short forecast (night)
-                  DayIcon: convertIconLink(dayPeriod.icon),  // Local path for day icon
-                  NightIcon: convertIconLink(nightPeriod.icon), // Local path for night icon
+                  DayShortForecast: dayPeriod.shortForecast,
+                  NightShortForecast: nightPeriod.shortForecast,
+                  DayIcon: convertIconLink(dayPeriod.icon),
+                  NightIcon: convertIconLink(nightPeriod.icon),
               };
 
               // Add to absolute forecast (by specific date)
@@ -611,23 +630,27 @@ const require = createRequire(import.meta.url);
         const startTime = new Date(period.startTime);
         const absoluteTime = formatAbsoluteTimeForDayAndNight(startTime, period.name);
 
-        // Convert temperature to Fahrenheit
-        const temperatureF = convertCtoF(period.temperature);
+        // Convert temperature to Fahrenheit and add degree symbol
+        const temperatureDeg = formatDegreesF(period.temperature, period.temperatureUnit);
 
         // Sanitize the time labels for XML tag names
         const sanitizedAbsoluteTime = sanitizeXmlTagName(absoluteTime);
         
+        // PoP with 15% threshold
+        const popVal = (period.probabilityOfPrecipitation && typeof period.probabilityOfPrecipitation.value === 'number')
+          ? period.probabilityOfPrecipitation.value : 0;
+        const popStr = popVal >= 15 ? `${popVal}%` : '';
+        
         const periodData = {
-          StartTime: period.name, // Use the NWS-provided human-readable name
-          Temperature: temperatureF,
+          StartTime: period.name,
+          Temperature: temperatureDeg,
           TemperatureUnit: 'F',
           WindSpeed: period.windSpeed,
           WindDirection: period.windDirection,
-          ChanceOfPrecipitation: period.probabilityOfPrecipitation ? `${period.probabilityOfPrecipitation.value}%` : 'N/A',
+          ChanceOfPrecipitation: popStr,
           DetailedForecast: period.detailedForecast,
         };
         
-        // Determine if this is a day or night period and assign the correct label
         if (period.isDaytime) {
           dayCount++;
           const relativeTime = `Day${dayCount}`;
@@ -635,7 +658,6 @@ const require = createRequire(import.meta.url);
           dayAndNightForecastAbsolute[sanitizedAbsoluteTime] = periodData;
           dayAndNightForecastRelative[relativeTime] = { ...periodData };
         } else {
-          // Only assign a night period after the first day has been assigned (if necessary)
           if (dayCount > 0) {
             nightCount++;
             const relativeTime = `Night${nightCount}`;
@@ -647,55 +669,6 @@ const require = createRequire(import.meta.url);
       });
 
       return { absolute: dayAndNightForecastAbsolute, relative: dayAndNightForecastRelative };
-    }
-
-    // Helper to format absolute time labels for XML keys
-    function formatAbsoluteTimeForDayAndNight(startTime, dayName) {
-      const dateOptions = { month: 'short', day: 'numeric', year: 'numeric' };
-      
-      // Format date
-      const datePart = startTime.toLocaleDateString('en-US', dateOptions).replace(/, /g, '_');
-      
-      // Get the hour (24-hour format)
-      const hours = startTime.getHours();
-      
-      // Determine whether it's Day or Night
-      const dayOrNight = (hours >= 6 && hours < 18) ? 'Day' : 'Night';
-      
-      return `${datePart}_${dayOrNight}`;
-    }
-
-    // Helper to format absolute time labels for XML keys
-    function formatAbsoluteTimeForHourly(startTime, dayName) {
-      const dateOptions = { month: 'short', day: 'numeric', year: 'numeric' };
-      const timeOptions = { hour: 'numeric', hour12: true };
-    
-      // Format date
-      const datePart = startTime.toLocaleDateString('en-US', dateOptions).replace(/, /g, '_');
-    
-      // Format time and remove minute part (since you only want the hour and AM/PM)
-      let timePart = startTime.toLocaleTimeString('en-US', timeOptions);
-    
-      // Replace space with underscore and convert to uppercase for AM/PM
-      timePart = timePart.replace(' ', '_').toUpperCase(); 
-    
-      return `${datePart}_${timePart}`;
-    }
-
-    function formatAbsoluteTimeForDaily(startTime) {
-      const dateOptions = { month: 'short', day: 'numeric', year: 'numeric' };
-    
-      // Format date
-      const datePart = startTime.toLocaleDateString('en-US', dateOptions).replace(/, /g, '_');
-      return datePart;
-    }
-
-    // Helper to calculate relative time labels for XML keys
-    function calcRelativeTime(startTime, index) {
-      const now = Date.now();
-      const diff = startTime - now;
-      const hours = Math.floor(diff / (1000 * 60 * 60));
-      return hours < 0 ? 'Now' : `${hours}Hrs`;
     }
 
     async function poll() {

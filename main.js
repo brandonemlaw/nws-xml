@@ -25,12 +25,13 @@ import puppeteer from 'puppeteer';
     let imageConfig = store.get('imageConfig', []);
     let imagePollInterval = store.get('imagePollInterval', 1800000); // Default 30 minutes
     let enableArkansasBurnBan = store.get('enableArkansasBurnBan', false);
+    let graphicNameTemplates = store.get('graphicNameTemplates', []);
 
     server.use(bodyParser.json());
     server.use(express.static(path.join(__dirname, 'react-ui', 'build')));
 
     server.get('/api/config', (req, res) => {
-      res.json({ urlConfig, pollInterval, imageConfig, imagePollInterval, enableArkansasBurnBan });
+      res.json({ urlConfig, pollInterval, imageConfig, imagePollInterval, enableArkansasBurnBan, graphicNameTemplates });
     });
 
     server.post('/api/setRefresh', async (req, res) => {
@@ -94,6 +95,41 @@ import puppeteer from 'puppeteer';
       // Trigger image polling to capture burn ban if enabled
       if (enableArkansasBurnBan) {
         captureArkansasBurnBan();
+      }
+    });
+
+    server.post('/api/graphicNameTemplates', (req, res) => {
+      const { dayNumber, nameTemplate } = req.body;
+      
+      // Validate input
+      if (dayNumber === undefined || dayNumber === null || !nameTemplate || nameTemplate.trim() === '') {
+        return res.status(400).json({ error: 'Day number and name template are required' });
+      }
+      
+      const dayNum = parseInt(dayNumber);
+      if (isNaN(dayNum) || dayNum < 0 || dayNum > 14) {
+        return res.status(400).json({ error: 'Day number must be between 0 and 14' });
+      }
+      
+      graphicNameTemplates = [...graphicNameTemplates, { dayNumber: dayNum, nameTemplate: nameTemplate.trim() }];
+      store.set('graphicNameTemplates', graphicNameTemplates);
+      res.json({ message: 'Graphic name template added', graphicNameTemplates });
+      
+      // Generate the graphic names XML
+      generateGraphicNamesXML();
+    });
+
+    server.delete('/api/graphicNameTemplates', (req, res) => {
+      const { index } = req.body;
+      if (index >= 0 && index < graphicNameTemplates.length) {
+        graphicNameTemplates.splice(index, 1);
+        store.set('graphicNameTemplates', graphicNameTemplates);
+        res.json({ message: 'Graphic name template deleted', graphicNameTemplates });
+        
+        // Regenerate the graphic names XML
+        generateGraphicNamesXML();
+      } else {
+        res.status(400).json({ error: 'Invalid index' });
       }
     });
 
@@ -660,6 +696,13 @@ import puppeteer from 'puppeteer';
         console.error('Error polling alerts:', error.message);
       }
       
+      // Generate graphic names XML after all weather data is processed
+      try {
+        await generateGraphicNamesXML();
+      } catch (error) {
+        console.error('Error generating graphic names:', error.message);
+      }
+      
       console.log(`Weather poll completed: ${successCount} successful, ${errorCount} failed`);
       setTimeout(poll, pollInterval);
     }
@@ -699,6 +742,90 @@ import puppeteer from 'puppeteer';
         console.log(`Error files created for ${locationName}`);
       } catch (writeError) {
         console.error(`Failed to create error files for ${locationName}:`, writeError.message);
+      }
+    }
+
+    function getDayName(dayNumber) {
+      const today = new Date();
+      const targetDate = new Date(today);
+      targetDate.setDate(today.getDate() + dayNumber);
+      
+      const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      return dayNames[targetDate.getDay()];
+    }
+
+    async function generateGraphicNamesXML() {
+      try {
+        if (graphicNameTemplates.length === 0) {
+          console.log('No graphic name templates configured');
+          return;
+        }
+        
+        console.log('Generating graphic names XML...');
+        const graphicNames = {};
+        
+        // Process each template
+        graphicNameTemplates.forEach((template, index) => {
+          const { dayNumber, nameTemplate } = template;
+          const dayName = getDayName(dayNumber);
+          const graphicName = nameTemplate.replace(/\{day\}/g, dayName);
+          
+          // Create sanitized XML tag name from the template
+          let sanitizedTagName = nameTemplate
+            .replace(/\{day\}/g, 'Day')  // Replace {day} placeholder with 'Day'
+            .replace(/[^a-zA-Z0-9]/g, '_')  // Replace non-alphanumeric with underscore
+            .replace(/_{2,}/g, '_')  // Replace multiple underscores with single
+            .replace(/^_|_$/g, '');  // Remove leading/trailing underscores
+          
+          // Ensure tag starts with a letter
+          if (/^[0-9]/.test(sanitizedTagName)) {
+            sanitizedTagName = 'Graphic_' + sanitizedTagName;
+          }
+          
+          // Ensure uniqueness if multiple templates have same sanitized name
+          let finalTagName = sanitizedTagName;
+          let counter = 1;
+          while (graphicNames[finalTagName]) {
+            finalTagName = sanitizedTagName + '_' + counter;
+            counter++;
+          }
+          
+          graphicNames[finalTagName] = graphicName;
+        });
+        
+        // Build XML
+        const builder = new xml2js.Builder({ 
+          headless: true,
+          renderOpts: { 'pretty': true, 'indent': '  ', 'newline': '\n' }
+        });
+        const xml = builder.buildObject({ GraphicNames: graphicNames });
+        
+        // Write to file
+        const filePath = path.join(userDocumentsPath, 'NWSForecastXMLFiles', 'GraphicNames.xml');
+        await fs.mkdir(path.dirname(filePath), { recursive: true });
+        await fs.writeFile(filePath, xml);
+        
+        console.log(`Graphic names XML written to ${filePath}`);
+        
+        // Also create a simple text version for easy reading
+        let textOutput = 'Generated Graphic Names\n';
+        textOutput += '=====================\n';
+        textOutput += `Generated: ${new Date().toLocaleString()}\n\n`;
+        
+        graphicNameTemplates.forEach((template, index) => {
+          const { dayNumber, nameTemplate } = template;
+          const dayName = getDayName(dayNumber);
+          const graphicName = nameTemplate.replace(/\{day\}/g, dayName);
+          textOutput += `${index + 1}. Day ${dayNumber} (${dayName}): "${graphicName}"\n`;
+        });
+        
+        const textFilePath = path.join(userDocumentsPath, 'NWSForecastXMLFiles', 'GraphicNames.txt');
+        await fs.writeFile(textFilePath, textOutput);
+        
+        console.log(`Graphic names text file written to ${textFilePath}`);
+        
+      } catch (error) {
+        console.error('Error generating graphic names XML:', error.message);
       }
     }
 

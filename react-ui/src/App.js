@@ -15,6 +15,9 @@ function App() {
   const [enableArkansasBurnBan, setEnableArkansasBurnBan] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [graphicNameTemplates, setGraphicNameTemplates] = useState([]);
+  const [newDayNumber, setNewDayNumber] = useState('');
+  const [newNameTemplate, setNewNameTemplate] = useState('');
 
   // Fetch the current configuration when the component loads
   useEffect(() => {
@@ -25,6 +28,7 @@ function App() {
         setImageConfig(response.data.imageConfig || []);
         setImagePollInterval((response.data.imagePollInterval || 1800000) / 1000);
         setEnableArkansasBurnBan(response.data.enableArkansasBurnBan || false);
+        setGraphicNameTemplates(response.data.graphicNameTemplates || []);
       })
       .catch(error => console.error('Error fetching config:', error));
   }, []);
@@ -171,6 +175,56 @@ function App() {
       });
   };
 
+  // Handle adding a new graphic name template
+  const handleGraphicNameSubmit = (e) => {
+    e.preventDefault();
+    
+    // Validation
+    if (!newDayNumber || !newNameTemplate) {
+      showError('Please fill in both day number and name template');
+      return;
+    }
+    
+    const dayNum = parseInt(newDayNumber);
+    if (isNaN(dayNum) || dayNum < 0 || dayNum > 14) {
+      showError('Day number must be between 0 and 14');
+      return;
+    }
+    
+    if (newNameTemplate.trim().length === 0) {
+      showError('Name template cannot be empty');
+      return;
+    }
+    
+    axios.post('/api/graphicNameTemplates', {
+      dayNumber: dayNum,
+      nameTemplate: newNameTemplate.trim()
+    })
+    .then(response => {
+      setGraphicNameTemplates(response.data.graphicNameTemplates);
+      setNewDayNumber('');
+      setNewNameTemplate('');
+      showSuccess('Graphic name template added successfully');
+    })
+    .catch(error => {
+      console.error('Error adding graphic name template:', error);
+      showError('Failed to add graphic name template');
+    });
+  };
+
+  // Handle deleting a graphic name template
+  const handleGraphicNameDelete = (index) => {
+    axios.delete('/api/graphicNameTemplates', { data: { index } })
+      .then(response => {
+        setGraphicNameTemplates(response.data.graphicNameTemplates);
+        showSuccess('Graphic name template deleted');
+      })
+      .catch(error => {
+        console.error('Error deleting graphic name template:', error);
+        showError('Failed to delete graphic name template');
+      });
+  };
+
   return (
     <div className="container">
       {/* Error and Success Messages */}
@@ -199,6 +253,80 @@ function App() {
           {successMessage}
         </div>
       )}
+
+      {/* Graphic Name Templates Section */}
+      <h2>Graphic Name Generator</h2>
+      <p style={{ fontSize: '14px', color: '#666', marginBottom: '15px' }}>
+        Create templates for graphic names using day numbers. Use {'{day}'} as a placeholder for the day name.
+        <br />
+        <strong>Example:</strong> Day "3" + "'s Tornado Risk" becomes "Thursday's Tornado Risk" (if today is Tuesday)
+      </p>
+
+      {/* List of configured graphic name templates */}
+      <h3>Current Templates</h3>
+      {graphicNameTemplates.length > 0 ? (
+        <ul>
+          {graphicNameTemplates.map((template, index) => {
+            const today = new Date();
+            const targetDate = new Date(today);
+            targetDate.setDate(today.getDate() + template.dayNumber);
+            const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            const dayName = dayNames[targetDate.getDay()];
+            const preview = template.nameTemplate.replace(/\{day\}/g, dayName);
+            
+            return (
+              <li key={index} style={{ marginBottom: '10px' }}>
+                <strong>Day {template.dayNumber}:</strong> {template.nameTemplate}<br />
+                <span style={{ fontSize: '12px', color: '#666', fontStyle: 'italic' }}>
+                  Preview: "{preview}"
+                </span><br />
+                <button 
+                  onClick={() => handleGraphicNameDelete(index)}
+                  style={{ marginTop: '5px', fontSize: '12px', padding: '3px 8px' }}
+                >
+                  Delete
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p style={{ color: '#666', fontStyle: 'italic' }}>No graphic name templates configured</p>
+      )}
+
+      {/* Form to add new graphic name template */}
+      <h3>Add New Template</h3>
+      <form onSubmit={handleGraphicNameSubmit}>
+        <div>
+          <label>
+            Day Number (0 = today, 1 = tomorrow, etc.):
+            <input
+              type="number"
+              min="0"
+              max="14"
+              value={newDayNumber}
+              onChange={(e) => setNewDayNumber(e.target.value)}
+              placeholder="e.g., 3"
+              required
+            />
+          </label>
+        </div>
+        <div>
+          <label>
+            Name Template (use {'{day}'} for day name):
+            <input
+              type="text"
+              value={newNameTemplate}
+              onChange={(e) => setNewNameTemplate(e.target.value)}
+              placeholder="e.g., {day}'s Tornado Risk"
+              required
+            />
+          </label>
+        </div>
+        <button type="submit">Add Template</button>
+      </form>
+
+      <br />
 
       {/* Manual refresh button */}
       <form>

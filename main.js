@@ -547,6 +547,9 @@ import Store from 'electron-store';
           await writeFile(`${sanitizedFileName}-DailyForecast-ByDaysOut.xml`, dailyRelativeXml);
           await writeFile(`${sanitizedFileName}-CurrentConditions.xml`, currentXml);
 
+          // --- NEW: Write alert XMLs for this location ---
+          // (We call the alert polling for all locations after the forecast polling)
+          await pollAlertsForLocations();
           console.log(`Data for ${name} written successfully.`);
         } catch (error) {
           console.error(`Error polling data for ${name}:`, error);
@@ -636,6 +639,271 @@ import Store from 'electron-store';
       pollImages().catch(error => {
         console.error('Image polling error:', error);
       });
+    }
+
+    // --- ALERT XML GENERATION SECTION ---
+
+    // Alert types to filter (case-insensitive, normalized)
+    const ALERT_TYPE_MAP = {
+      'Tornado Warning': 'TornadoWarning',
+      'Tornado Emergency': 'TornadoWarning',
+      'Severe Thunderstorm Warning': 'SevereThunderstormWarning',
+      'Tornado Watch': 'TornadoWatch',
+      'Severe Thunderstorm Watch': 'SevereThunderstormWatch'
+    };
+    const ALERT_TYPE_KEYS = Object.keys(ALERT_TYPE_MAP);
+
+    // Human-readable alert type names for XML display
+    const ALERT_TYPE_DISPLAY_NAMES = {
+      'TornadoWarning': 'Tornado Warning',
+      'SevereThunderstormWarning': 'Severe Thunderstorm Warning',
+      'TornadoWatch': 'Tornado Watch',
+      'SevereThunderstormWatch': 'Severe Thunderstorm Watch'
+    };
+
+    // Utility: Emphasize "tornado warning" and "tornado" in alert text
+    function emphasizeTornado(text) {
+      if (!text) return text;
+      // Emphasize "tornado warning" as a group, preserving original caps
+      text = text.replace(/(\bTornado Warning\b)/gi, '*$1*');
+      // Emphasize "tornado" not already in "*tornado warning*"
+      text = text.replace(/(?<!\*)\bTornado\b(?!\s*Warning)(?!\*)/gi, '*Tornado*');
+      return text;
+    }
+
+    // Utility: Fix time codes like "700 PM CDT" to "7:00 PM CDT"
+    function fixTimeCodes(text) {
+      if (!text) return text;
+      return text.replace(/\b(\d{1,2})(\d{2})?\s*(AM|PM)\s+([A-Z]{2,4})\b/g, (_, h, m, ap, tz) => {
+        m = m || "00";
+        return `${parseInt(h, 10)}:${m} ${ap} ${tz}`;
+      });
+    }
+
+    // Utility: Remove AWIPS identifier at start of description
+    function removeAwipsIdentifier(text) {
+      if (!text) return text;
+      return text.replace(/^[A-Z0-9\. ]{5,}\n+/, '');
+    }
+
+    // Utility: Process alert text as in weather-announce-2.py
+    function processAlertText(alert) {
+      let description = alert.description || '';
+      description = removeAwipsIdentifier(description);
+      description = fixTimeCodes(description);
+      let nwsHeadline = '';
+      if (alert.parameters && alert.parameters.NWSheadline) {
+        if (Array.isArray(alert.parameters.NWSheadline)) {
+          nwsHeadline = alert.parameters.NWSheadline.join(' ');
+        } else {
+          nwsHeadline = alert.parameters.NWSheadline;
+        }
+        nwsHeadline = fixTimeCodes(nwsHeadline);
+      }
+      let headline = fixTimeCodes(alert.headline || '');
+      let fullMessage = (nwsHeadline + '\n' + description).trim();
+      fullMessage = emphasizeTornado(fullMessage);
+      return {
+        processedText: fullMessage,
+        headline,
+        nwsHeadline,
+        description
+      };
+    }
+
+    // Utility: Normalize event type to our alert type keys
+    function normalizeAlertType(event, parameters) {
+      if (!event) return null;
+      let e = event.trim().toLowerCase();
+      if (e === 'tornado emergency') return 'Tornado Emergency';
+      if (e === 'tornado warning') {
+        // Check for tornado emergency in parameters
+        if (parameters && parameters.tornadoDamageThreat && parameters.tornadoDamageThreat[0] &&
+            parameters.tornadoDamageThreat[0].toLowerCase() === 'catastrophic') {
+          return 'Tornado Emergency';
+        }
+        return 'Tornado Warning';
+      }
+      if (e === 'severe thunderstorm warning') return 'Severe Thunderstorm Warning';
+      if (e === 'tornado watch') return 'Tornado Watch';
+      if (e === 'severe thunderstorm watch') return 'Severe Thunderstorm Watch';
+      // Fuzzy match
+      for (const key of ALERT_TYPE_KEYS) {
+        if (e.includes(key.toLowerCase())) return key;
+      }
+      return null;
+    }
+
+    // Main function to fetch and write alert XMLs for each location
+    async function pollAlertsForLocations() {
+      if (!urlConfig || urlConfig.length === 0) return;
+
+      const userAgent = 'github.com/brandonemlaw-nws-xml';
+      for (const entry of urlConfig) {
+        const { latitude, longitude, name } = entry;
+        try {
+          // Query alerts for this point
+          const url = `https://api.weather.gov/alerts/active?point=${latitude},${longitude}`;
+          const response = await fetch(url, { headers: { 'User-Agent': userAgent } });
+          if (!response.ok) {
+            console.error(`Failed to fetch alerts for ${name}: ${response.statusText}`);
+            // Still create placeholder files even if fetch fails
+            await createPlaceholderAlertFiles(name);
+            continue;
+          }
+          const data = await response.json();
+          if (!data.features || !Array.isArray(data.features)) {
+            // No alerts data, create placeholders
+            await createPlaceholderAlertFiles(name);
+            continue;
+          }
+
+          // Find the most recent alert for each type
+          const latestAlerts = {};
+          for (const feature of data.features) {
+            const alert = feature.properties || feature; // API sometimes nests under .properties
+            if (!alert || alert.status !== "Actual" || !alert.event) continue;
+            const alertType = normalizeAlertType(alert.event, alert.parameters);
+            if (!alertType || !(alertType in ALERT_TYPE_MAP)) continue;
+            const key = ALERT_TYPE_MAP[alertType];
+            // Only keep the most recent (by sent time)
+            if (!latestAlerts[key] || new Date(alert.sent) > new Date(latestAlerts[key].sent)) {
+              latestAlerts[key] = alert;
+            }
+          }
+
+          // Write XML for ALL alert types (active alerts or placeholders)
+          for (const [alertTypeKey, alertTypeValue] of Object.entries(ALERT_TYPE_MAP)) {
+            const key = alertTypeValue;
+            const displayName = ALERT_TYPE_DISPLAY_NAMES[key];
+            let xmlObj;
+            
+            if (latestAlerts[key]) {
+              // Active alert found
+              const alert = latestAlerts[key];
+              const { processedText, headline, nwsHeadline, description } = processAlertText(alert);
+              xmlObj = {
+                Alert: {
+                  Location: name,
+                  AlertType: displayName,
+                  Event: alert.event,
+                  Headline: headline,
+                  NWSheadline: nwsHeadline,
+                  Description: description,
+                  ProcessedText: processedText,
+                  Instruction: alert.instruction || '',
+                  Effective: alert.effective || '',
+                  Expires: alert.expires || '',
+                  Severity: alert.severity || '',
+                  Certainty: alert.certainty || '',
+                  Urgency: alert.urgency || '',
+                  Status: alert.status || '',
+                  MessageType: alert.messageType || '',
+                  Id: alert.id || '',
+                  AreaDesc: alert.areaDesc || '',
+                  Web: alert.web || '',
+                  Parameters: alert.parameters ? JSON.stringify(alert.parameters) : '',
+                  Raw: JSON.stringify(alert)
+                }
+              };
+            } else {
+              // No active alert, create placeholder
+              xmlObj = {
+                Alert: {
+                  Location: name,
+                  AlertType: displayName,
+                  Event: 'No alert in effect',
+                  Headline: 'No alert in effect',
+                  NWSheadline: 'No alert in effect',
+                  Description: 'No alert in effect',
+                  ProcessedText: 'No alert in effect',
+                  Instruction: '',
+                  Effective: '',
+                  Expires: '',
+                  Severity: '',
+                  Certainty: '',
+                  Urgency: '',
+                  Status: '',
+                  MessageType: '',
+                  Id: '',
+                  AreaDesc: '',
+                  Web: '',
+                  Parameters: '',
+                  Raw: ''
+                }
+              };
+            }
+            
+            const builder = new xml2js.Builder({ headless: true });
+            const xml = builder.buildObject(xmlObj);
+
+            // Sanitize file name (still using the key for consistency)
+            const sanitizeFileName = (s) => s.replace(/[\/\\,:.]/g, '-').replace(/\s+/g, '_');
+            const fileName = `${sanitizeFileName(name)}-${key}-Alert.xml`;
+            await writeFile(fileName, xml);
+          }
+        } catch (err) {
+          console.error(`Error processing alerts for ${name}:`, err);
+          // Still create placeholder files even if there's an error
+          await createPlaceholderAlertFiles(name);
+        }
+      }
+    }
+
+    // Helper function to create placeholder alert files when no data is available
+    async function createPlaceholderAlertFiles(locationName) {
+      for (const [alertTypeKey, alertTypeValue] of Object.entries(ALERT_TYPE_MAP)) {
+        const key = alertTypeValue;
+        const displayName = ALERT_TYPE_DISPLAY_NAMES[key];
+        const xmlObj = {
+          Alert: {
+            Location: locationName,
+            AlertType: displayName,
+            Event: 'No alert in effect',
+            Headline: 'No alert in effect',
+            NWSheadline: 'No alert in effect',
+            Description: 'No alert in effect',
+            ProcessedText: 'No alert in effect',
+            Instruction: '',
+            Effective: '',
+            Expires: '',
+            Severity: '',
+            Certainty: '',
+            Urgency: '',
+            Status: '',
+            MessageType: '',
+            Id: '',
+            AreaDesc: '',
+            Web: '',
+            Parameters: '',
+            Raw: ''
+          }
+        };
+        
+        const builder = new xml2js.Builder({ headless: true });
+        const xml = builder.buildObject(xmlObj);
+
+        // Sanitize file name (still using the key for consistency)
+        const sanitizeFileName = (s) => s.replace(/[\/\\,:.]/g, '-').replace(/\s+/g, '_');
+        const fileName = `${sanitizeFileName(locationName)}-${key}-Alert.xml`;
+        await writeFile(fileName, xml);
+      }
+    }
+
+    // Utility to convert a value to a string, handling null or undefined
+    function toString(value) {
+      return value !== null && value !== undefined ? value.toString() : '';
+    }
+
+    // Utility to convert a value to a number, handling null or undefined
+    function toNumber(value) {
+      const num = parseFloat(value);
+      return isNaN(num) ? 0 : num;
+    }
+
+    // Utility to convert a value to a boolean, handling null or undefined
+    function toBoolean(value) {
+      return !!value && value !== 'false' && value !== '0';
     }
 
     app.on('ready', () => {

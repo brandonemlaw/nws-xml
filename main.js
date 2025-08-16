@@ -17,7 +17,7 @@ const require = createRequire(import.meta.url);
   try {
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = dirname(__filename);
-    const userDocumentsPath = app.getPath('documents');
+    const userDocumentsPath = process.platform === 'win32' ? 'C:/AutomaticWeatherData' : path.join(os.homedir(), 'AutomaticWeatherData');
 
     const server = express();
     const PORT = 3005;

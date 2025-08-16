@@ -281,6 +281,12 @@ const require = createRequire(import.meta.url);
       return sanitized;
     }
 
+    // Return a 3-letter day-of-week abbreviation based on a Date
+    function getShortDayAbbrev(date) {
+      const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      return days[date.getDay()];
+    }
+
     async function fetchNWSData(latitude, longitude) {
       const maxRetries = 3;
       let lastError;
@@ -485,6 +491,9 @@ const require = createRequire(import.meta.url);
               const dayAbsoluteTime = formatAbsoluteTimeForDaily(dayStartTime, dayPeriod.name);
               const sanitizedAbsoluteTime = sanitizeXmlTagName(dayAbsoluteTime);
 
+              // 3-letter day-of-week abbreviation computed from forecast start time
+              const shortDay = getShortDayAbbrev(dayStartTime);
+
               // Temperatures as Fahrenheit with degree symbol
               const dayTemperatureStr = formatDegreesF(dayPeriod.temperature, dayPeriod.temperatureUnit);
               const nightTemperatureStr = formatDegreesF(nightPeriod.temperature, nightPeriod.temperatureUnit);
@@ -507,6 +516,7 @@ const require = createRequire(import.meta.url);
 
               const forecastData = {
                   StartTime: dayPeriod.name, // Human-readable day name
+                  ShortDay: shortDay,        // 3-letter day-of-week (e.g., "Sat")
                   HighTemperature: dayTemperatureStr,
                   LowTemperature: nightTemperatureStr,
                   TemperatureUnit: 'F',

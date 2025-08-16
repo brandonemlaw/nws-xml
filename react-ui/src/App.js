@@ -19,6 +19,7 @@ function App() {
   const [newDayNumber, setNewDayNumber] = useState('');
   const [newNameTemplate, setNewNameTemplate] = useState('');
   const [isImporting, setIsImporting] = useState(false);
+  const [activeTab, setActiveTab] = useState('weather');
 
   // Fetch the current configuration when the component loads
   useEffect(() => {
@@ -340,295 +341,375 @@ function App() {
         </div>
       )}
 
-      {/* Graphic Name Templates Section */}
-      <h2>Graphic Name Generator</h2>
-      <p style={{ fontSize: '14px', color: '#666', marginBottom: '15px' }}>
-        Create templates for graphic names using day numbers. Use {'{day}'} as a placeholder for the day name.
-        <br />
-        <strong>Example:</strong> Day "3" + "'s Tornado Risk" becomes "Thursday's Tornado Risk" (if today is Tuesday)
-      </p>
-
-      {/* List of configured graphic name templates */}
-      <h3>Current Templates</h3>
-      {graphicNameTemplates.length > 0 ? (
-        <ul>
-          {graphicNameTemplates.map((template, index) => {
-            const today = new Date();
-            const targetDate = new Date(today);
-            targetDate.setDate(today.getDate() + template.dayNumber);
-            const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-            const dayName = dayNames[targetDate.getDay()];
-            const preview = template.nameTemplate.replace(/\{day\}/g, dayName);
-            
-            return (
-              <li key={index} style={{ marginBottom: '10px' }}>
-                <strong>Day {template.dayNumber}:</strong> {template.nameTemplate}<br />
-                <span style={{ fontSize: '12px', color: '#666', fontStyle: 'italic' }}>
-                  Preview: "{preview}"
-                </span><br />
-                <button 
-                  onClick={() => handleGraphicNameDelete(index)}
-                  style={{ marginTop: '5px', fontSize: '12px', padding: '3px 8px' }}
-                >
-                  Delete
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      ) : (
-        <p style={{ color: '#666', fontStyle: 'italic' }}>No graphic name templates configured</p>
-      )}
-
-      {/* Form to add new graphic name template */}
-      <h3>Add New Template</h3>
-      <form onSubmit={handleGraphicNameSubmit}>
-        <div>
-          <label>
-            Day Number (0 = today, 1 = tomorrow, etc.):
-            <input
-              type="number"
-              min="0"
-              max="14"
-              value={newDayNumber}
-              onChange={(e) => setNewDayNumber(e.target.value)}
-              placeholder="e.g., 3"
-              required
-            />
-          </label>
-        </div>
-        <div>
-          <label>
-            Name Template (use {'{day}'} for day name):
-            <input
-              type="text"
-              value={newNameTemplate}
-              onChange={(e) => setNewNameTemplate(e.target.value)}
-              placeholder="e.g., {day}'s Tornado Risk"
-              required
-            />
-          </label>
-        </div>
-        <button type="submit">Add Template</button>
-      </form>
-
-      <br />
-
-      {/* Manual refresh button */}
-      <form>
-        <button onClick={handleRefresh}>Refresh Weather Data</button>
-        <button onClick={handleImageRefresh}>Refresh Images</button>
-      </form>
-
-      {/* List of configured locations */}
-      <h3>Configured Locations</h3>
-      <ul>
-        {urlConfig.map((entry, index) => (
-          <li key={index}>
-            <strong>Name:</strong> {entry.name} <br />
-            <strong>Latitude:</strong> {entry.latitude} <br />
-            <strong>Longitude:</strong> {entry.longitude} <br />
-            <button onClick={() => handleDelete(entry.name)}>Delete</button>
-          </li>
-        ))}
-      </ul>
-
-      <br />
-
-      {/* Form to configure a new location */}
-      <h3>Configure New Location</h3>
-      <form onSubmit={handleSubmit}>
-        <div>
-          <label>
-            Latitude:
-            <input
-              type="number"
-              step="any"
-              value={newLatitude}
-              onChange={(e) => setNewLatitude(e.target.value)}
-              required
-            />
-          </label>
-        </div>
-        <div>
-          <label>
-            Longitude:
-            <input
-              type="number"
-              step="any"
-              value={newLongitude}
-              onChange={(e) => setNewLongitude(e.target.value)}
-              required
-            />
-          </label>
-        </div>
-        <div>
-          <label>
-            Name:
-            <input
-              type="text"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              required
-            />
-          </label>
-        </div>
-        <button type="submit">Add Location</button>
-      </form>
-
-      {/* Form to change the refresh interval */}
-      <h3>Change Weather Refresh Time</h3>
-      <form onSubmit={handleSetRefresh}>
-        <div>
-          <label>
-            Refresh Time (seconds):
-            <input
-              type="number"
-              value={pollInterval}
-              onChange={(e) => setPollInterval(e.target.value)}
-              required
-            />
-          </label>
-          <button type="submit">Save</button>
-        </div>
-      </form>
-
-      {/* List of configured images */}
-      <h3>Configured Images</h3>
-      <ul>
-        {imageConfig.map((entry, index) => (
-          <li key={index}>
-            <strong>Name:</strong> {entry.name} <br />
-            <strong>URL:</strong> {entry.url} <br />
-            <button onClick={() => handleImageDelete(entry.name)}>Delete</button>
-          </li>
-        ))}
-      </ul>
-
-      <br />
-
-      {/* Form to configure a new image */}
-      <h3>Configure New Image</h3>
-      <form onSubmit={handleImageSubmit}>
-        <div>
-          <label>
-            Image URL:
-            <input
-              type="url"
-              value={newImageUrl}
-              onChange={(e) => setNewImageUrl(e.target.value)}
-              required
-            />
-          </label>
-        </div>
-        <div>
-          <label>
-            Image Name:
-            <input
-              type="text"
-              value={newImageName}
-              onChange={(e) => setNewImageName(e.target.value)}
-              required
-            />
-          </label>
-        </div>
-        <button type="submit">Add Image</button>
-      </form>
-
-      {/* Form to change the image refresh interval */}
-      <h3>Change Image Refresh Time</h3>
-      <form onSubmit={handleSetImageRefresh}>
-        <div>
-          <label>
-            Image Refresh Time (seconds):
-            <input
-              type="number"
-              value={imagePollInterval}
-              onChange={(e) => setImagePollInterval(e.target.value)}
-              required
-            />
-          </label>
-          <button type="submit">Save</button>
-        </div>
-      </form>
-
-      {/* Arkansas Burn Ban checkbox */}
-      <h3>Special Features</h3>
-      <div>
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={enableArkansasBurnBan}
-            onChange={handleArkansasBurnBanToggle}
-          />
-          Enable Arkansas Burn Ban Map
-        </label>
-        <p style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
-          Automatically captures and saves the Arkansas burn ban map image every refresh cycle.
-        </p>
-      </div>
-
-      {/* Configuration Import/Export Section */}
-      <h3>Configuration Management</h3>
-      <p style={{ fontSize: '14px', color: '#666', marginBottom: '15px' }}>
-        Export your current configuration to a file or import a configuration from another computer to keep settings in sync.
-      </p>
-      
-      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+      {/* Tab Navigation */}
+      <div className="tabs">
         <button 
-          onClick={handleExportConfig}
-          style={{ 
-            backgroundColor: '#2e7d32', 
-            color: 'white',
-            padding: '8px 16px',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: 'pointer'
-          }}
+          className={`tab ${activeTab === 'weather' ? 'active' : ''}`}
+          onClick={() => setActiveTab('weather')}
         >
-          📥 Export Configuration
+          ⛅ Weather Locations
         </button>
-        
-        <label style={{ 
-          backgroundColor: '#1976d2', 
-          color: 'white',
-          padding: '8px 16px',
-          borderRadius: '4px',
-          cursor: 'pointer',
-          display: 'inline-block'
-        }}>
-          📤 Import Configuration
-          <input
-            type="file"
-            accept=".json"
-            onChange={handleImportConfig}
-            style={{ display: 'none' }}
-            disabled={isImporting}
-          />
-        </label>
-        
-        {isImporting && (
-          <span style={{ color: '#666', fontSize: '14px' }}>
-            Importing configuration...
-          </span>
-        )}
+        <button 
+          className={`tab ${activeTab === 'images' ? 'active' : ''}`}
+          onClick={() => setActiveTab('images')}
+        >
+          🖼️ Images
+        </button>
+        <button 
+          className={`tab ${activeTab === 'graphics' ? 'active' : ''}`}
+          onClick={() => setActiveTab('graphics')}
+        >
+          📊 Graphic Names
+        </button>
+        <button 
+          className={`tab ${activeTab === 'settings' ? 'active' : ''}`}
+          onClick={() => setActiveTab('settings')}
+        >
+          ⚙️ Settings
+        </button>
       </div>
-      
-      <div style={{ 
-        backgroundColor: '#f5f5f5', 
-        padding: '10px', 
-        borderRadius: '4px', 
-        marginTop: '10px',
-        fontSize: '12px',
-        color: '#666'
-      }}>
-        <strong>Note:</strong> Importing a configuration will replace all current settings including:
-        <ul style={{ margin: '5px 0', paddingLeft: '20px' }}>
-          <li>Weather locations and refresh intervals</li>
-          <li>Image sources and polling settings</li>
-          <li>Graphic name templates</li>
-          <li>Arkansas burn ban setting</li>
-        </ul>
+
+      {/* Tab Content */}
+      <div className="tab-content">
+        {activeTab === 'weather' && (
+          <div>
+            <h2>Weather Locations</h2>
+            
+            {/* Manual refresh button */}
+            <div style={{ marginBottom: '20px' }}>
+              <button onClick={handleRefresh} style={{ marginRight: '10px' }}>
+                🔄 Refresh Weather Data
+              </button>
+            </div>
+
+            {/* List of configured locations */}
+            <h3>Configured Locations</h3>
+            {urlConfig.length > 0 ? (
+              <ul>
+                {urlConfig.map((entry, index) => (
+                  <li key={index} style={{ marginBottom: '15px', padding: '10px', border: '1px solid #ddd', borderRadius: '4px' }}>
+                    <strong>Name:</strong> {entry.name} <br />
+                    <strong>Latitude:</strong> {entry.latitude} <br />
+                    <strong>Longitude:</strong> {entry.longitude} <br />
+                    <button 
+                      onClick={() => handleDelete(entry.name)}
+                      style={{ marginTop: '5px', backgroundColor: '#d32f2f', color: 'white', border: 'none', padding: '5px 10px', borderRadius: '4px' }}
+                    >
+                      Delete
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p style={{ color: '#666', fontStyle: 'italic' }}>No weather locations configured</p>
+            )}
+
+            {/* Form to configure a new location */}
+            <h3>Add New Location</h3>
+            <form onSubmit={handleSubmit}>
+              <div style={{ marginBottom: '10px' }}>
+                <label>
+                  Latitude:
+                  <input
+                    type="number"
+                    step="any"
+                    value={newLatitude}
+                    onChange={(e) => setNewLatitude(e.target.value)}
+                    required
+                    style={{ marginLeft: '10px' }}
+                  />
+                </label>
+              </div>
+              <div style={{ marginBottom: '10px' }}>
+                <label>
+                  Longitude:
+                  <input
+                    type="number"
+                    step="any"
+                    value={newLongitude}
+                    onChange={(e) => setNewLongitude(e.target.value)}
+                    required
+                    style={{ marginLeft: '10px' }}
+                  />
+                </label>
+              </div>
+              <div style={{ marginBottom: '10px' }}>
+                <label>
+                  Name:
+                  <input
+                    type="text"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    required
+                    style={{ marginLeft: '10px' }}
+                  />
+                </label>
+              </div>
+              <button type="submit">Add Location</button>
+            </form>
+
+            {/* Form to change the refresh interval */}
+            <h3>Weather Refresh Interval</h3>
+            <form onSubmit={handleSetRefresh}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <label>
+                  Refresh Time (seconds):
+                  <input
+                    type="number"
+                    value={pollInterval}
+                    onChange={(e) => setPollInterval(e.target.value)}
+                    required
+                    style={{ marginLeft: '10px' }}
+                  />
+                </label>
+                <button type="submit">Save</button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {activeTab === 'images' && (
+          <div>
+            <h2>Image Sources</h2>
+            
+            {/* Manual image refresh button */}
+            <div style={{ marginBottom: '20px' }}>
+              <button onClick={handleImageRefresh}>
+                🔄 Refresh Images
+              </button>
+            </div>
+
+            {/* List of configured images */}
+            <h3>Configured Images</h3>
+            {imageConfig.length > 0 ? (
+              <ul>
+                {imageConfig.map((entry, index) => (
+                  <li key={index} style={{ marginBottom: '15px', padding: '10px', border: '1px solid #ddd', borderRadius: '4px' }}>
+                    <strong>Name:</strong> {entry.name} <br />
+                    <strong>URL:</strong> {entry.url} <br />
+                    <button 
+                      onClick={() => handleImageDelete(entry.name)}
+                      style={{ marginTop: '5px', backgroundColor: '#d32f2f', color: 'white', border: 'none', padding: '5px 10px', borderRadius: '4px' }}
+                    >
+                      Delete
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p style={{ color: '#666', fontStyle: 'italic' }}>No image sources configured</p>
+            )}
+
+            {/* Form to configure a new image */}
+            <h3>Add New Image Source</h3>
+            <form onSubmit={handleImageSubmit}>
+              <div style={{ marginBottom: '10px' }}>
+                <label>
+                  Image URL:
+                  <input
+                    type="url"
+                    value={newImageUrl}
+                    onChange={(e) => setNewImageUrl(e.target.value)}
+                    required
+                    style={{ marginLeft: '10px', width: '300px' }}
+                  />
+                </label>
+              </div>
+              <div style={{ marginBottom: '10px' }}>
+                <label>
+                  Image Name:
+                  <input
+                    type="text"
+                    value={newImageName}
+                    onChange={(e) => setNewImageName(e.target.value)}
+                    required
+                    style={{ marginLeft: '10px' }}
+                  />
+                </label>
+              </div>
+              <button type="submit">Add Image</button>
+            </form>
+
+            {/* Form to change the image refresh interval */}
+            <h3>Image Refresh Interval</h3>
+            <form onSubmit={handleSetImageRefresh}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <label>
+                  Image Refresh Time (seconds):
+                  <input
+                    type="number"
+                    value={imagePollInterval}
+                    onChange={(e) => setImagePollInterval(e.target.value)}
+                    required
+                    style={{ marginLeft: '10px' }}
+                  />
+                </label>
+                <button type="submit">Save</button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {activeTab === 'graphics' && (
+          <div>
+            <h2>Graphic Name Generator</h2>
+            <p style={{ fontSize: '14px', color: '#666', marginBottom: '15px' }}>
+              Create templates for graphic names using day numbers. Use {'{day}'} as a placeholder for the day name.
+              <br />
+              <strong>Example:</strong> Day "3" + "'s Tornado Risk" becomes "Thursday's Tornado Risk" (if today is Tuesday)
+            </p>
+
+            {/* List of configured graphic name templates */}
+            <h3>Current Templates</h3>
+            {graphicNameTemplates.length > 0 ? (
+              <ul>
+                {graphicNameTemplates.map((template, index) => {
+                  const today = new Date();
+                  const targetDate = new Date(today);
+                  targetDate.setDate(today.getDate() + template.dayNumber);
+                  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                  const dayName = dayNames[targetDate.getDay()];
+                  const preview = template.nameTemplate.replace(/\{day\}/g, dayName);
+                  
+                  return (
+                    <li key={index} style={{ marginBottom: '15px', padding: '10px', border: '1px solid #ddd', borderRadius: '4px' }}>
+                      <strong>Day {template.dayNumber}:</strong> {template.nameTemplate}<br />
+                      <span style={{ fontSize: '12px', color: '#666', fontStyle: 'italic' }}>
+                        Preview: "{preview}"
+                      </span><br />
+                      <button 
+                        onClick={() => handleGraphicNameDelete(index)}
+                        style={{ marginTop: '5px', backgroundColor: '#d32f2f', color: 'white', border: 'none', padding: '5px 10px', borderRadius: '4px' }}
+                      >
+                        Delete
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p style={{ color: '#666', fontStyle: 'italic' }}>No graphic name templates configured</p>
+            )}
+
+            {/* Form to add new graphic name template */}
+            <h3>Add New Template</h3>
+            <form onSubmit={handleGraphicNameSubmit}>
+              <div style={{ marginBottom: '10px' }}>
+                <label>
+                  Day Number (0 = today, 1 = tomorrow, etc.):
+                  <input
+                    type="number"
+                    min="0"
+                    max="14"
+                    value={newDayNumber}
+                    onChange={(e) => setNewDayNumber(e.target.value)}
+                    placeholder="e.g., 3"
+                    required
+                    style={{ marginLeft: '10px' }}
+                  />
+                </label>
+              </div>
+              <div style={{ marginBottom: '10px' }}>
+                <label>
+                  Name Template (use {'{day}'} for day name):
+                  <input
+                    type="text"
+                    value={newNameTemplate}
+                    onChange={(e) => setNewNameTemplate(e.target.value)}
+                    placeholder="e.g., {day}'s Tornado Risk"
+                    required
+                    style={{ marginLeft: '10px', width: '250px' }}
+                  />
+                </label>
+              </div>
+              <button type="submit">Add Template</button>
+            </form>
+          </div>
+        )}
+
+        {activeTab === 'settings' && (
+          <div>
+            <h2>Settings & Configuration</h2>
+
+            {/* Arkansas Burn Ban checkbox */}
+            <h3>Special Features</h3>
+            <div style={{ marginBottom: '30px' }}>
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={enableArkansasBurnBan}
+                  onChange={handleArkansasBurnBanToggle}
+                />
+                Enable Arkansas Burn Ban Map
+              </label>
+              <p style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
+                Automatically captures and saves the Arkansas burn ban map image every refresh cycle.
+              </p>
+            </div>
+
+            {/* Configuration Import/Export Section */}
+            <h3>Configuration Management</h3>
+            <p style={{ fontSize: '14px', color: '#666', marginBottom: '15px' }}>
+              Export your current configuration to a file or import a configuration from another computer to keep settings in sync.
+            </p>
+            
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '15px' }}>
+              <button 
+                onClick={handleExportConfig}
+                style={{ 
+                  backgroundColor: '#2e7d32', 
+                  color: 'white',
+                  padding: '8px 16px',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer'
+                }}
+              >
+                📥 Export Configuration
+              </button>
+              
+              <label style={{ 
+                backgroundColor: '#1976d2', 
+                color: 'white',
+                padding: '8px 16px',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                display: 'inline-block'
+              }}>
+                📤 Import Configuration
+                <input
+                  type="file"
+                  accept=".json"
+                  onChange={handleImportConfig}
+                  style={{ display: 'none' }}
+                  disabled={isImporting}
+                />
+              </label>
+              
+              {isImporting && (
+                <span style={{ color: '#666', fontSize: '14px' }}>
+                  Importing configuration...
+                </span>
+              )}
+            </div>
+            
+            <div style={{ 
+              backgroundColor: '#f5f5f5', 
+              padding: '10px', 
+              borderRadius: '4px', 
+              fontSize: '12px',
+              color: '#666'
+            }}>
+              <strong>Note:</strong> Importing a configuration will replace all current settings including:
+              <ul style={{ margin: '5px 0', paddingLeft: '20px' }}>
+                <li>Weather locations and refresh intervals</li>
+                <li>Image sources and polling settings</li>
+                <li>Graphic name templates</li>
+                <li>Arkansas burn ban setting</li>
+              </ul>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -7,6 +7,7 @@ import xml2js from 'xml2js';
 import { promises as fs } from 'fs';
 import { fileURLToPath } from 'url';
 import Store from 'electron-store';
+import os from 'os';
 
 (async () => {
   try {
@@ -359,8 +360,8 @@ import Store from 'electron-store';
           iconFile += '.png';
       }
   
-      // Return the cleaned-up local path
-      return `/Users/brandonemlaw/Documents/WeatherIcons/${iconFile}`;
+      // Return the cleaned-up local path using dynamic home directory
+      return path.join(os.homedir(), 'Documents', 'WeatherIcons', iconFile);
   }
 
     // Utility function to calculate wind direction from degrees

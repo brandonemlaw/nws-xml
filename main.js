@@ -241,10 +241,24 @@ const require = createRequire(import.meta.url);
       if (typeof valueWithUnit === 'string' && valueWithUnit.trim().endsWith('C')) {
         // Extract the numeric part and convert to Fahrenheit
         const celsius = parseFloat(valueWithUnit);
-        return (celsius * 9 / 5) + 32; // Remove 'F' suffix
+        return (celsius * 9 / 5) + 32; // Return numeric value without unit
       }
       // If it's not in Celsius or the format is wrong, return the input as is
       return valueWithUnit;
+    }
+
+    // Utility to get 3-letter day abbreviation
+    function getThreeLetterDay(date) {
+      const days = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+      return days[date.getDay()];
+    }
+
+    // Utility to format precipitation percentage (hide if less than 15%)
+    function formatPrecipitationPercentage(value) {
+      if (!value && value !== 0) return "";
+      const numValue = typeof value === 'number' ? value : parseInt(value);
+      if (isNaN(numValue) || numValue < 15) return "";
+      return `${numValue}%`;
     }
 
     // Sanitize XML tag names by removing spaces and invalid characters
@@ -421,7 +435,8 @@ const require = createRequire(import.meta.url);
         // Add both absolute and relative versions to the forecast
         hourlyForecast[sanitizedAbsoluteTime] = {
           StartTime: period.name, // Use the NWS-provided human-readable name
-          Temperature: temperatureF,
+          ThreeLetterDay: getThreeLetterDay(startTime),
+          Temperature: `${temperatureF}°`,
           TemperatureUnit: 'F',
           WindSpeed: period.windSpeed,
           WindDirection: period.windDirection,
@@ -431,7 +446,8 @@ const require = createRequire(import.meta.url);
 
         hourlyForecast[sanitizedRelativeTime] = {
           StartTime: period.name, // Use the NWS-provided human-readable name
-          Temperature: temperatureF,
+          ThreeLetterDay: getThreeLetterDay(startTime),
+          Temperature: `${temperatureF}°`,
           TemperatureUnit: 'F',
           WindSpeed: period.windSpeed,
           WindDirection: period.windDirection,
@@ -488,12 +504,13 @@ const require = createRequire(import.meta.url);
 
               const forecastData = {
                   StartTime: dayPeriod.name, // Human-readable day name
-                  HighTemperature: dayTemperatureF,
-                  LowTemperature: nightTemperatureF,
+                  ThreeLetterDay: getThreeLetterDay(dayStartTime),
+                  HighTemperature: `${dayTemperatureF}°`,
+                  LowTemperature: `${nightTemperatureF}°`,
                   TemperatureUnit: 'F',
                   WindSpeed: `${maxWindSpeed} mph`,
                   WindDirection: windDirection, // Strongest wind direction
-                  ChanceOfPrecipitation: `${maxPoP}%`, // Strongest PoP
+                  ChanceOfPrecipitation: formatPrecipitationPercentage(maxPoP),
                   DayDetailedForecast: dayPeriod.detailedForecast,
                   NightDetailedForecast: nightPeriod.detailedForecast,
                   DayShortForecast: dayPeriod.shortForecast, // Add short forecast (day)
@@ -531,7 +548,7 @@ const require = createRequire(import.meta.url);
       const iconLink = convertIconLink(currentConditionsData.properties.icon);
 
       return {
-          Temperature: currentTempF !== null ? `${currentTempF.toFixed(0)}°` : 'N/A', // Remove F suffix
+          Temperature: currentTempF !== null ? `${currentTempF.toFixed(0)}°` : 'N/A',
           WeatherDescription: weatherDescription || 'N/A',
           WindSpeed: windSpeed ? `${windSpeed.toFixed(0)} mph` : 'Calm',
           WindDirection: windDirection ? calcWind(windDirection) : 'N/A',
@@ -619,11 +636,12 @@ const require = createRequire(import.meta.url);
         
         const periodData = {
           StartTime: period.name, // Use the NWS-provided human-readable name
-          Temperature: temperatureF,
+          ThreeLetterDay: getThreeLetterDay(startTime),
+          Temperature: `${temperatureF}°`,
           TemperatureUnit: 'F',
           WindSpeed: period.windSpeed,
           WindDirection: period.windDirection,
-          ChanceOfPrecipitation: period.probabilityOfPrecipitation ? `${period.probabilityOfPrecipitation.value}%` : 'N/A',
+          ChanceOfPrecipitation: formatPrecipitationPercentage(period.probabilityOfPrecipitation ? period.probabilityOfPrecipitation.value : 0),
           DetailedForecast: period.detailedForecast,
         };
         

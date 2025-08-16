@@ -90,7 +90,7 @@ import Store from 'electron-store';
       if (typeof valueWithUnit === 'string' && valueWithUnit.trim().endsWith('C')) {
         // Extract the numeric part and convert to Fahrenheit
         const celsius = parseFloat(valueWithUnit);
-        return (celsius * 9 / 5) + 32 + 'F';
+        return (celsius * 9 / 5) + 32; // Remove 'F' suffix
       }
       // If it's not in Celsius or the format is wrong, return the input as is
       return valueWithUnit;
@@ -324,7 +324,7 @@ import Store from 'electron-store';
       const iconLink = convertIconLink(currentConditionsData.properties.icon);
 
       return {
-          Temperature: currentTempF !== null ? `${currentTempF.toFixed(0)}°F` : 'N/A',
+          Temperature: currentTempF !== null ? `${currentTempF.toFixed(0)}°` : 'N/A', // Remove F suffix
           WeatherDescription: weatherDescription || 'N/A',
           WindSpeed: windSpeed ? `${windSpeed.toFixed(0)} mph` : 'Calm',
           WindDirection: windDirection ? calcWind(windDirection) : 'N/A',

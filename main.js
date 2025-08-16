@@ -539,35 +539,35 @@ const require = createRequire(import.meta.url);
       };
     }
 
-    // Function to convert NWS icon link to local path in ~/Documents/WeatherIcons/
+    // Function to convert NWS icon link to local path under the app's base directory
     function convertIconLink(iconUrl) {
       // Extract the filename from the URL after the last '/'
       let iconFile = iconUrl.substring(iconUrl.lastIndexOf('/') + 1);
-  
+
       // Remove any query parameters (like "?size=medium") by truncating at the first '?'
       const paramsIndex = iconFile.indexOf('?');
       if (paramsIndex > -1) {
           iconFile = iconFile.substring(0, paramsIndex);
       }
-  
+
       // Remove any commas and numbers from the icon filename
       iconFile = iconFile.replace(/[,0-9]/g, '');
-  
+
       // Determine if the icon is for nighttime
       const isNight = iconUrl.includes('night');
-  
+
       // If it's a night icon, prepend 'night/' to the filename
       if (isNight) {
           iconFile = `night/${iconFile}`;
       }
-  
+
       // Ensure the filename ends with .png
       if (!iconFile.endsWith('.png')) {
           iconFile += '.png';
       }
-  
-      // Return the cleaned-up local path using dynamic home directory
-      return path.join(os.homedir(), 'Documents', 'WeatherIcons', iconFile);
+
+      // Return the cleaned-up local path using the app's base directory
+      return path.join(userDocumentsPath, 'WeatherIcons', iconFile);
   }
 
     // Utility function to calculate wind direction from degrees

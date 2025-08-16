@@ -1,6 +1,6 @@
 {
-  "name": "google-sheets-election-xml-converter",
-  "version": "1.0.2",
+  "name": "nws-xml-converter",
+  "version": "1.1.0",
   "description": "",
   "type": "module",
   "main": "main.js",
@@ -12,7 +12,7 @@
     "publishwin": "electron-builder --win --config --ia32"
   },
   "build": {
-    "appId": "google-sheets-election-xml-converter",
+    "appId": "nws-xml-converter",
     "mac": {
       "category": "productivity"
     },

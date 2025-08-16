@@ -208,7 +208,8 @@ import Store from 'electron-store';
 
     // Function to merge daily forecast and current conditions from NWS data
     function formatDailyForecast(forecastData, currentConditionsData) {
-      const dailyForecast = {};
+      const dailyForecastAbsolute = {};
+      const dailyForecastRelative = {};
       const periods = forecastData.properties.periods;
       let startIndex = 0;
       let dayCounter = 0; // Counter to track Day1, Day2, etc.
@@ -249,8 +250,7 @@ import Store from 'electron-store';
               // Take the wind direction corresponding to the stronger wind
               const windDirection = (dayWindSpeed >= nightWindSpeed) ? dayPeriod.windDirection : nightPeriod.windDirection;
 
-              // Merge day and night into a single daily forecast entry
-              dailyForecast[sanitizedAbsoluteTime] = {
+              const forecastData = {
                   StartTime: dayPeriod.name, // Human-readable day name
                   HighTemperature: dayTemperatureF,
                   LowTemperature: nightTemperatureF,
@@ -266,32 +266,37 @@ import Store from 'electron-store';
                   NightIcon: convertIconLink(nightPeriod.icon), // Local path for night icon
               };
 
-              // Add the DayX tag (e.g., Day1, Day2, etc.) to represent the first full day/night cycle
-              dailyForecast[`Day${dayCounter}`] = { ...dailyForecast[sanitizedAbsoluteTime] };
+              // Add to absolute forecast (by specific date)
+              dailyForecastAbsolute[sanitizedAbsoluteTime] = forecastData;
+
+              // Add to relative forecast (by day number)
+              dailyForecastRelative[`Day${dayCounter}`] = { ...forecastData };
           }
       }
 
-      // Add current conditions to the forecast
+      // Add current conditions to both forecasts
       if (currentConditionsData) {
           const currentConditions = formatCurrentConditions(currentConditionsData);
-          dailyForecast['CurrentConditions'] = currentConditions;
+          dailyForecastAbsolute['CurrentConditions'] = currentConditions;
+          dailyForecastRelative['CurrentConditions'] = currentConditions;
       }
 
-      return dailyForecast;
+      return { absolute: dailyForecastAbsolute, relative: dailyForecastRelative };
     }
 
     // Function to format current conditions from NWS data
     function formatCurrentConditions(currentConditionsData) {
       const currentTempC = currentConditionsData.properties.temperature.value;
-      const currentTempF = convertCtoF(currentTempC); // Convert to Fahrenheit
+      // Convert Celsius to Fahrenheit properly (NWS API returns numeric values in Celsius)
+      const currentTempF = currentTempC !== null ? (currentTempC * 9 / 5) + 32 : null;
       const weatherDescription = currentConditionsData.properties.textDescription;
       const windSpeed = currentConditionsData.properties.windSpeed.value;
       const windDirection = currentConditionsData.properties.windDirection.value;
       const iconLink = convertIconLink(currentConditionsData.properties.icon);
 
       return {
-          Temperature: `${currentTempF.toFixed(0)}°F`,
-          WeatherDescription: weatherDescription,
+          Temperature: currentTempF !== null ? `${currentTempF.toFixed(0)}°F` : 'N/A',
+          WeatherDescription: weatherDescription || 'N/A',
           WindSpeed: windSpeed ? `${windSpeed.toFixed(0)} mph` : 'Calm',
           WindDirection: windDirection ? calcWind(windDirection) : 'N/A',
           Icon: iconLink, // Local path for current conditions icon
@@ -320,13 +325,13 @@ import Store from 'electron-store';
           iconFile = `night/${iconFile}`;
       }
   
-      // Ensure the filename ends with .svg
-      if (!iconFile.endsWith('.svg')) {
-          iconFile += '.svg';
+      // Ensure the filename ends with .png
+      if (!iconFile.endsWith('.png')) {
+          iconFile += '.png';
       }
   
       // Return the cleaned-up local path
-      return `~/Documents/WeatherIcons/${iconFile}`;
+      return `/Users/brandonemlaw/Documents/WeatherIcons/${iconFile}`;
   }
 
     // Utility function to calculate wind direction from degrees
@@ -358,11 +363,11 @@ import Store from 'electron-store';
 
     // Function to format the day and night forecast with DayX and NightX labels
     function formatDayAndNightForecast(forecastData) {
-      const dailyForecast = {};
+      const dayAndNightForecastAbsolute = {};
+      const dayAndNightForecastRelative = {};
       const periods = forecastData.properties.periods;
       let dayCount = 0; // Counter for day periods (Day1, Day2, etc.)
       let nightCount = 0; // Counter for night periods (Night1, Night2, etc.)
-      let periodIndex = 0; // To track the actual index in case we skip the first night
 
       // Iterate through each forecast period
       periods.forEach((period, index) => {
@@ -376,46 +381,36 @@ import Store from 'electron-store';
         // Sanitize the time labels for XML tag names
         const sanitizedAbsoluteTime = sanitizeXmlTagName(absoluteTime);
         
+        const periodData = {
+          StartTime: period.name, // Use the NWS-provided human-readable name
+          Temperature: temperatureF,
+          TemperatureUnit: 'F',
+          WindSpeed: period.windSpeed,
+          WindDirection: period.windDirection,
+          ChanceOfPrecipitation: period.probabilityOfPrecipitation ? `${period.probabilityOfPrecipitation.value}%` : 'N/A',
+          DetailedForecast: period.detailedForecast,
+        };
+        
         // Determine if this is a day or night period and assign the correct label
         if (period.isDaytime) {
           dayCount++;
           const relativeTime = `Day${dayCount}`;
-          const sanitizedRelativeTime = sanitizeXmlTagName(relativeTime);
 
-          dailyForecast[sanitizedAbsoluteTime] = {
-            StartTime: period.name, // Use the NWS-provided human-readable name
-            Temperature: temperatureF,
-            TemperatureUnit: 'F',
-            WindSpeed: period.windSpeed,
-            WindDirection: period.windDirection,
-            ChanceOfPrecipitation: period.probabilityOfPrecipitation ? `${period.probabilityOfPrecipitation.value}%` : 'N/A',
-            DetailedForecast: period.detailedForecast,
-          };
-
-          dailyForecast[sanitizedRelativeTime] = dailyForecast[sanitizedAbsoluteTime];
+          dayAndNightForecastAbsolute[sanitizedAbsoluteTime] = periodData;
+          dayAndNightForecastRelative[relativeTime] = { ...periodData };
         } else {
           // Only assign a night period after the first day has been assigned (if necessary)
           if (dayCount > 0) {
             nightCount++;
             const relativeTime = `Night${nightCount}`;
-            const sanitizedRelativeTime = sanitizeXmlTagName(relativeTime);
 
-            dailyForecast[sanitizedAbsoluteTime] = {
-              StartTime: period.name, // Use the NWS-provided human-readable name
-              Temperature: temperatureF,
-              TemperatureUnit: 'F',
-              WindSpeed: period.windSpeed,
-              WindDirection: period.windDirection,
-              ChanceOfPrecipitation: period.probabilityOfPrecipitation ? `${period.probabilityOfPrecipitation.value}%` : 'N/A',
-              DetailedForecast: period.detailedForecast,
-            };
-
-            dailyForecast[sanitizedRelativeTime] = dailyForecast[sanitizedAbsoluteTime];
+            dayAndNightForecastAbsolute[sanitizedAbsoluteTime] = periodData;
+            dayAndNightForecastRelative[relativeTime] = { ...periodData };
           }
         }
       });
 
-      return dailyForecast;
+      return { absolute: dayAndNightForecastAbsolute, relative: dayAndNightForecastRelative };
     }
 
     // Helper to format absolute time labels for XML keys
@@ -484,8 +479,8 @@ import Store from 'electron-store';
           const { forecastData, hourlyData, currentData } = data;
 
           const hourlyForecast = formatHourlyForecast(hourlyData);
-          const dayAndNightForecast = formatDayAndNightForecast(forecastData);
-          const dailyForecast = formatDailyForecast(forecastData);
+          const dayAndNightForecasts = formatDayAndNightForecast(forecastData);
+          const dailyForecasts = formatDailyForecast(forecastData, currentData);
           const currentConditions = formatCurrentConditions(currentData);
 
           await fs.mkdir(path.join(userDocumentsPath, 'NWSForecastXMLFiles'), { recursive: true });
@@ -494,13 +489,21 @@ import Store from 'electron-store';
           const hourlyBuilder = new xml2js.Builder({ headless: true });
           const hourlyXml = hourlyBuilder.buildObject({ HourlyForecast: hourlyForecast });
 
-          // Build XML for Daily/Period Forecast (Absolute and Relative)
-          const dailyBuilder = new xml2js.Builder({ headless: true });
-          const dailyXml = dailyBuilder.buildObject({ DailyForecast: dailyForecast });
+          // Build XML for Daily Forecast - By Specific Date (Absolute)
+          const dailyAbsoluteBuilder = new xml2js.Builder({ headless: true });
+          const dailyAbsoluteXml = dailyAbsoluteBuilder.buildObject({ DailyForecast: dailyForecasts.absolute });
 
-          // Build XML for Daily/Period Forecast (Absolute and Relative)
-          const dayAndNightBuilder = new xml2js.Builder({ headless: true });
-          const dayAndNightXml = dayAndNightBuilder.buildObject({ DayAndNightForecast: dayAndNightForecast });
+          // Build XML for Daily Forecast - By Days Out (Relative)
+          const dailyRelativeBuilder = new xml2js.Builder({ headless: true });
+          const dailyRelativeXml = dailyRelativeBuilder.buildObject({ DailyForecast: dailyForecasts.relative });
+
+          // Build XML for Day and Night Forecast - By Specific Date (Absolute)
+          const dayAndNightAbsoluteBuilder = new xml2js.Builder({ headless: true });
+          const dayAndNightAbsoluteXml = dayAndNightAbsoluteBuilder.buildObject({ DayAndNightForecast: dayAndNightForecasts.absolute });
+
+          // Build XML for Day and Night Forecast - By Days Out (Relative)
+          const dayAndNightRelativeBuilder = new xml2js.Builder({ headless: true });
+          const dayAndNightRelativeXml = dayAndNightRelativeBuilder.buildObject({ DayAndNightForecast: dayAndNightForecasts.relative });
 
           // Build XML for Current Conditions
           const currentBuilder = new xml2js.Builder({ headless: true });
@@ -509,8 +512,10 @@ import Store from 'electron-store';
           // Write files
           const sanitizedFileName = sanitizeFileName(name);
           await writeFile(`${sanitizedFileName}-HourlyForecast.xml`, hourlyXml);
-          await writeFile(`${sanitizedFileName}-DayAndNightForecast.xml`, dayAndNightXml);
-          await writeFile(`${sanitizedFileName}-DailyForecast.xml`, dailyXml);
+          await writeFile(`${sanitizedFileName}-DayAndNightForecast-BySpecificDate.xml`, dayAndNightAbsoluteXml);
+          await writeFile(`${sanitizedFileName}-DayAndNightForecast-ByDaysOut.xml`, dayAndNightRelativeXml);
+          await writeFile(`${sanitizedFileName}-DailyForecast-BySpecificDate.xml`, dailyAbsoluteXml);
+          await writeFile(`${sanitizedFileName}-DailyForecast-ByDaysOut.xml`, dailyRelativeXml);
           await writeFile(`${sanitizedFileName}-CurrentConditions.xml`, currentXml);
 
           console.log(`Data for ${name} written successfully.`);

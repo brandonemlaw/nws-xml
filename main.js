@@ -33,6 +33,26 @@ const require = createRequire(import.meta.url);
     server.use(bodyParser.json());
     server.use(express.static(path.join(__dirname, 'react-ui', 'build')));
 
+    // Common XML builder options to preserve whitespace and prevent empty element collapse
+    const xmlBuilderOptions = {
+      headless: true,
+      renderOpts: { 
+        pretty: true, 
+        indent: '  ', 
+        newline: '\n' 
+      },
+      allowSurrogateChars: true,
+      cdata: false,
+      explicitArray: false,
+      explicitRoot: false,
+      trim: false,  // Don't trim whitespace
+      normalize: false,  // Don't normalize whitespace
+      emptyTag: function(name) {
+        // Return self-closing tag format for empty elements
+        return '<' + name + '></' + name + '>';
+      }
+    };
+
     server.get('/api/config', (req, res) => {
       res.json({ urlConfig, pollInterval, imageConfig, imagePollInterval, enableArkansasBurnBan, graphicNameTemplates });
     });
@@ -255,9 +275,9 @@ const require = createRequire(import.meta.url);
 
     // Utility to format precipitation percentage (hide if less than 15%)
     function formatPrecipitationPercentage(value) {
-      if (!value && value !== 0) return "";
+      if (!value && value !== 0) return " ";
       const numValue = typeof value === 'number' ? value : parseInt(value);
-      if (isNaN(numValue) || numValue < 15) return "";
+      if (isNaN(numValue) || numValue < 15) return " ";
       return `${numValue}%`;
     }
 
@@ -758,29 +778,29 @@ const require = createRequire(import.meta.url);
           await fs.mkdir(path.join(userDocumentsPath, 'NWSForecastXMLFiles'), { recursive: true });
 
           // Build XML for Hourly Forecast (Absolute and Relative)
-          const hourlyBuilder = new xml2js.Builder({ headless: true });
+          const hourlyBuilder = new xml2js.Builder(xmlBuilderOptions);
           const hourlyXml = hourlyBuilder.buildObject({ HourlyForecast: hourlyForecast });
 
           // Build XML for Daily Forecast - By Specific Date (Absolute)
-          const dailyAbsoluteBuilder = new xml2js.Builder({ headless: true });
+          const dailyAbsoluteBuilder = new xml2js.Builder(xmlBuilderOptions);
           const dailyAbsoluteXml = dailyAbsoluteBuilder.buildObject({ DailyForecast: dailyForecasts.absolute });
 
           // Build XML for Daily Forecast - By Days Out (Relative)
-          const dailyRelativeBuilder = new xml2js.Builder({ headless: true });
+          const dailyRelativeBuilder = new xml2js.Builder(xmlBuilderOptions);
           const dailyRelativeXml = dailyRelativeBuilder.buildObject({ DailyForecast: dailyForecasts.relative });
 
           // Build XML for Day and Night Forecast - By Specific Date (Absolute)
-          const dayAndNightAbsoluteBuilder = new xml2js.Builder({ headless: true });
+          const dayAndNightAbsoluteBuilder = new xml2js.Builder(xmlBuilderOptions);
           const dayAndNightAbsoluteXml = dayAndNightAbsoluteBuilder.buildObject({ DayAndNightForecast: dayAndNightForecasts.absolute });
 
           // Build XML for Day and Night Forecast - By Days Out (Relative)
-          const dayAndNightRelativeBuilder = new xml2js.Builder({ headless: true });
+          const dayAndNightRelativeBuilder = new xml2js.Builder(xmlBuilderOptions);
           const dayAndNightRelativeXml = dayAndNightRelativeBuilder.buildObject({ DayAndNightForecast: dayAndNightForecasts.relative });
 
           // Build XML for Current Conditions (only if we have current data)
           let currentXml = '';
           if (currentConditions) {
-            const currentBuilder = new xml2js.Builder({ headless: true });
+            const currentBuilder = new xml2js.Builder(xmlBuilderOptions);
             currentXml = currentBuilder.buildObject({ CurrentConditions: currentConditions });
           } else {
             // Create placeholder current conditions
@@ -917,7 +937,7 @@ const require = createRequire(import.meta.url);
         
         // Build XML
         const builder = new xml2js.Builder({ 
-          headless: true,
+          ...xmlBuilderOptions,
           renderOpts: { 'pretty': true, 'indent': '  ', 'newline': '\n' }
         });
         const xml = builder.buildObject({ GraphicNames: graphicNames });
@@ -1434,7 +1454,7 @@ const require = createRequire(import.meta.url);
               };
             }
             
-            const builder = new xml2js.Builder({ headless: true });
+            const builder = new xml2js.Builder(xmlBuilderOptions);
             const xml = builder.buildObject(xmlObj);
 
             // Sanitize file name (still using the key for consistency)
@@ -1480,7 +1500,7 @@ const require = createRequire(import.meta.url);
           }
         };
         
-        const builder = new xml2js.Builder({ headless: true });
+        const builder = new xml2js.Builder(xmlBuilderOptions);
         const xml = builder.buildObject(xmlObj);
 
         // Sanitize file name (still using the key for consistency)

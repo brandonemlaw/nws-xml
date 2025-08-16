@@ -206,51 +206,154 @@ import Store from 'electron-store';
       return hourlyForecast;
     }
 
-    // Function to format the daily forecast based on merged day/night periods
-    function formatDailyForecast(forecastData) {
+    // Function to merge daily forecast and current conditions from NWS data
+    function formatDailyForecast(forecastData, currentConditionsData) {
       const dailyForecast = {};
       const periods = forecastData.properties.periods;
       let startIndex = 0;
+      let dayCounter = 0; // Counter to track Day1, Day2, etc.
 
       // Determine if we start from day or night and skip the first night if necessary
       if (periods[0].isDaytime === false) {
-        startIndex = 1; // Skip the first night
+          startIndex = 1; // Skip the first night
       }
 
       // Loop through the forecast periods two at a time (day and night)
       for (let i = startIndex; i < periods.length - 1; i += 2) {
-        const dayPeriod = periods[i];
-        const nightPeriod = periods[i + 1];
+          const dayPeriod = periods[i];
+          const nightPeriod = periods[i + 1];
 
-        // Ensure that dayPeriod is actually a daytime forecast and nightPeriod is nighttime
-        if (dayPeriod.isDaytime && !nightPeriod.isDaytime) {
-          const dayStartTime = new Date(dayPeriod.startTime);
-          const dayAbsoluteTime = formatAbsoluteTimeForDaily(dayStartTime, dayPeriod.name);
-          const sanitizedAbsoluteTime = sanitizeXmlTagName(dayAbsoluteTime);
+          // Ensure that dayPeriod is actually a daytime forecast and nightPeriod is nighttime
+          if (dayPeriod.isDaytime && !nightPeriod.isDaytime) {
+              // Increment the day counter for each full day (day + night)
+              dayCounter++;
 
-          // Convert temperatures to Fahrenheit
-          const dayTemperatureF = convertCtoF(dayPeriod.temperature, dayPeriod.temperatureUnit);
-          const nightTemperatureF = convertCtoF(nightPeriod.temperature, dayPeriod.temperatureUnit );
+              const dayStartTime = new Date(dayPeriod.startTime);
+              const dayAbsoluteTime = formatAbsoluteTimeForDaily(dayStartTime, dayPeriod.name);
+              const sanitizedAbsoluteTime = sanitizeXmlTagName(dayAbsoluteTime);
 
-          // Merge day and night into a single daily forecast entry
-          dailyForecast[sanitizedAbsoluteTime] = {
-            StartTime: dayPeriod.name, // Human-readable day name
-            HighTemperature: dayTemperatureF,
-            LowTemperature: nightTemperatureF,
-            TemperatureUnit: 'F',
-            DayWindSpeed: dayPeriod.windSpeed,
-            DayWindDirection: dayPeriod.windDirection,
-            NightWindSpeed: nightPeriod.windSpeed,
-            NightWindDirection: nightPeriod.windDirection,
-            DayChanceOfPrecipitation: dayPeriod.probabilityOfPrecipitation ? `${dayPeriod.probabilityOfPrecipitation.value}%` : 'N/A',
-            NightChanceOfPrecipitation: nightPeriod.probabilityOfPrecipitation ? `${nightPeriod.probabilityOfPrecipitation.value}%` : 'N/A',
-            DayDetailedForecast: dayPeriod.detailedForecast,
-            NightDetailedForecast: nightPeriod.detailedForecast,
-          };
-        }
+              // Convert temperatures to Fahrenheit
+              const dayTemperatureF = convertCtoF(dayPeriod.temperature, dayPeriod.temperatureUnit);
+              const nightTemperatureF = convertCtoF(nightPeriod.temperature, dayPeriod.temperatureUnit);
+
+              // Combine PoP (Probability of Precipitation) by taking the maximum of day and night
+              const dayPoP = dayPeriod.probabilityOfPrecipitation ? dayPeriod.probabilityOfPrecipitation.value : 0;
+              const nightPoP = nightPeriod.probabilityOfPrecipitation ? nightPeriod.probabilityOfPrecipitation.value : 0;
+              const maxPoP = Math.max(dayPoP, nightPoP);
+
+              // Combine Wind Speed by taking the stronger wind
+              const dayWindSpeed = extractWindSpeed(dayPeriod.windSpeed);
+              const nightWindSpeed = extractWindSpeed(nightPeriod.windSpeed);
+              const maxWindSpeed = Math.max(dayWindSpeed, nightWindSpeed);
+
+              // Take the wind direction corresponding to the stronger wind
+              const windDirection = (dayWindSpeed >= nightWindSpeed) ? dayPeriod.windDirection : nightPeriod.windDirection;
+
+              // Merge day and night into a single daily forecast entry
+              dailyForecast[sanitizedAbsoluteTime] = {
+                  StartTime: dayPeriod.name, // Human-readable day name
+                  HighTemperature: dayTemperatureF,
+                  LowTemperature: nightTemperatureF,
+                  TemperatureUnit: 'F',
+                  WindSpeed: `${maxWindSpeed} mph`,
+                  WindDirection: windDirection, // Strongest wind direction
+                  ChanceOfPrecipitation: `${maxPoP}%`, // Strongest PoP
+                  DayDetailedForecast: dayPeriod.detailedForecast,
+                  NightDetailedForecast: nightPeriod.detailedForecast,
+                  DayShortForecast: dayPeriod.shortForecast, // Add short forecast (day)
+                  NightShortForecast: nightPeriod.shortForecast, // Add short forecast (night)
+                  DayIcon: convertIconLink(dayPeriod.icon),  // Local path for day icon
+                  NightIcon: convertIconLink(nightPeriod.icon), // Local path for night icon
+              };
+
+              // Add the DayX tag (e.g., Day1, Day2, etc.) to represent the first full day/night cycle
+              dailyForecast[`Day${dayCounter}`] = { ...dailyForecast[sanitizedAbsoluteTime] };
+          }
+      }
+
+      // Add current conditions to the forecast
+      if (currentConditionsData) {
+          const currentConditions = formatCurrentConditions(currentConditionsData);
+          dailyForecast['CurrentConditions'] = currentConditions;
       }
 
       return dailyForecast;
+    }
+
+    // Function to format current conditions from NWS data
+    function formatCurrentConditions(currentConditionsData) {
+      const currentTempC = currentConditionsData.properties.temperature.value;
+      const currentTempF = convertCtoF(currentTempC); // Convert to Fahrenheit
+      const weatherDescription = currentConditionsData.properties.textDescription;
+      const windSpeed = currentConditionsData.properties.windSpeed.value;
+      const windDirection = currentConditionsData.properties.windDirection.value;
+      const iconLink = convertIconLink(currentConditionsData.properties.icon);
+
+      return {
+          Temperature: `${currentTempF.toFixed(0)}°F`,
+          WeatherDescription: weatherDescription,
+          WindSpeed: windSpeed ? `${windSpeed.toFixed(0)} mph` : 'Calm',
+          WindDirection: windDirection ? calcWind(windDirection) : 'N/A',
+          Icon: iconLink, // Local path for current conditions icon
+      };
+    }
+
+    // Function to convert NWS icon link to local path in ~/Documents/WeatherIcons/
+    function convertIconLink(iconUrl) {
+      // Extract the filename from the URL after the last '/'
+      let iconFile = iconUrl.substring(iconUrl.lastIndexOf('/') + 1);
+  
+      // Remove any query parameters (like "?size=medium") by truncating at the first '?'
+      const paramsIndex = iconFile.indexOf('?');
+      if (paramsIndex > -1) {
+          iconFile = iconFile.substring(0, paramsIndex);
+      }
+  
+      // Remove any commas and numbers from the icon filename
+      iconFile = iconFile.replace(/[,0-9]/g, '');
+  
+      // Determine if the icon is for nighttime
+      const isNight = iconUrl.includes('night');
+  
+      // If it's a night icon, prepend 'night/' to the filename
+      if (isNight) {
+          iconFile = `night/${iconFile}`;
+      }
+  
+      // Ensure the filename ends with .svg
+      if (!iconFile.endsWith('.svg')) {
+          iconFile += '.svg';
+      }
+  
+      // Return the cleaned-up local path
+      return `~/Documents/WeatherIcons/${iconFile}`;
+  }
+
+    // Utility function to calculate wind direction from degrees
+    function calcWind(windDegrees) {
+      if (windDegrees > 348.75 || windDegrees < 11.25) return 'N';
+      if (windDegrees > 11.25 && windDegrees < 33.75) return 'NNE';
+      if (windDegrees > 33.75 && windDegrees < 56.25) return 'NE';
+      if (windDegrees > 56.25 && windDegrees < 75) return 'ENE';
+      if (windDegrees > 78.75 && windDegrees < 101.25) return 'E';
+      if (windDegrees > 101.25 && windDegrees < 123.75) return 'ESE';
+      if (windDegrees > 123.75 && windDegrees < 146.25) return 'SE';
+      if (windDegrees > 146.25 && windDegrees < 168.75) return 'SSE';
+      if (windDegrees > 168.75 && windDegrees < 191.25) return 'S';
+      if (windDegrees > 191.25 && windDegrees < 213.75) return 'SSW';
+      if (windDegrees > 213.75 && windDegrees < 236.25) return 'SW';
+      if (windDegrees > 236.25 && windDegrees < 258.75) return 'WSW';
+      if (windDegrees > 258.75 && windDegrees < 281.25) return 'W';
+      if (windDegrees > 281.25 && windDegrees < 303.75) return 'WNW';
+      if (windDegrees > 303.75 && windDegrees < 326.25) return 'NW';
+      if (windDegrees > 326.25 && windDegrees < 348.75) return 'NNW';
+      return '';
+    }
+
+    // Utility function to convert wind speed from string to number (mph)
+    function extractWindSpeed(windSpeedStr) {
+      const speedMatch = windSpeedStr.match(/\d+/);
+      return speedMatch ? parseFloat(speedMatch[0]) : 0;
     }
 
     // Function to format the day and night forecast with DayX and NightX labels
@@ -313,21 +416,6 @@ import Store from 'electron-store';
       });
 
       return dailyForecast;
-    }
-
-    // Format the current conditions, converting temperature to Fahrenheit
-    function formatCurrentConditions(currentData) {
-      const tempC = currentData.properties.temperature.value;
-      const tempF = convertCtoF(tempC);
-
-      return {
-        Temperature: tempF || 'N/A',
-        TemperatureUnit: 'F',
-        WindSpeed: currentData.properties.windSpeed.value ? `${currentData.properties.windSpeed.value} km/h` : 'N/A',
-        WindDirection: currentData.properties.windDirection.value || 'N/A',
-        Humidity: currentData.properties.relativeHumidity.value ? `${currentData.properties.relativeHumidity.value}%` : 'N/A',
-        Condition: currentData.properties.textDescription || 'N/A',
-      };
     }
 
     // Helper to format absolute time labels for XML keys

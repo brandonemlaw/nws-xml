@@ -8,6 +8,7 @@ import { promises as fs } from 'fs';
 import { fileURLToPath } from 'url';
 import Store from 'electron-store';
 import os from 'os';
+import puppeteer from 'puppeteer';
 
 (async () => {
   try {
@@ -23,12 +24,13 @@ import os from 'os';
     let pollInterval = store.get('pollInterval', 60000);
     let imageConfig = store.get('imageConfig', []);
     let imagePollInterval = store.get('imagePollInterval', 1800000); // Default 30 minutes
+    let enableArkansasBurnBan = store.get('enableArkansasBurnBan', false);
 
     server.use(bodyParser.json());
     server.use(express.static(path.join(__dirname, 'react-ui', 'build')));
 
     server.get('/api/config', (req, res) => {
-      res.json({ urlConfig, pollInterval, imageConfig, imagePollInterval });
+      res.json({ urlConfig, pollInterval, imageConfig, imagePollInterval, enableArkansasBurnBan });
     });
 
     server.post('/api/setRefresh', async (req, res) => {
@@ -83,6 +85,16 @@ import os from 'os';
       imageConfig = imageConfig.filter(entry => entry.name !== name);
       store.set('imageConfig', imageConfig);
       res.json({ message: 'Image deleted', imageConfig });
+    });
+
+    server.post('/api/arkansasBurnBan', (req, res) => {
+      enableArkansasBurnBan = req.body.enabled;
+      store.set('enableArkansasBurnBan', enableArkansasBurnBan);
+      res.json({ message: 'Arkansas burn ban setting updated', enableArkansasBurnBan });
+      // Trigger image polling to capture burn ban if enabled
+      if (enableArkansasBurnBan) {
+        captureArkansasBurnBan();
+      }
     });
 
     // Utility to convert Celsius to Fahrenheit
@@ -604,11 +616,129 @@ import os from 'os';
       }
     }
 
-    async function pollImages() {
-      if (imageConfig.length === 0) return;
+    async function captureArkansasBurnBan() {
+      if (!enableArkansasBurnBan) return;
 
+      console.log('Capturing Arkansas burn ban map...');
+      
+      let browser;
+      try {
+        browser = await puppeteer.launch({
+          headless: 'new',
+          args: ['--no-sandbox', '--disable-setuid-sandbox']
+        });
+        
+        const page = await browser.newPage();
+        await page.setViewport({ width: 1200, height: 800 });
+        
+        // Set a user agent to avoid being blocked
+        await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+        
+        // Navigate to the Arkansas burn ban page with retry logic
+        const maxRetries = 3;
+        let lastError;
+        
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            console.log(`Attempting to load Arkansas burn ban page (attempt ${attempt}/${maxRetries})`);
+            
+            await page.goto('https://mip.agri.arkansas.gov/agtools/Forestry/Fire_Info/Burn_Bans?show_districts=False', {
+              waitUntil: 'networkidle0',
+              timeout: 30000
+            });
+            
+            // Wait for the page to fully load and render any dynamic content
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            
+            // Check if page loaded successfully by looking for expected content
+            const pageContent = await page.content();
+            if (pageContent.includes('Burn Bans') || pageContent.includes('Forestry')) {
+              console.log('Arkansas burn ban page loaded successfully');
+              break;
+            } else {
+              throw new Error('Page loaded but does not contain expected burn ban content');
+            }
+            
+          } catch (error) {
+            lastError = error;
+            console.warn(`Attempt ${attempt} failed: ${error.message}`);
+            
+            if (attempt < maxRetries) {
+              console.log(`Waiting 5 seconds before retry...`);
+              await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+          }
+        }
+        
+        if (lastError && maxRetries > 0) {
+          throw new Error(`Failed to load Arkansas burn ban page after ${maxRetries} attempts: ${lastError.message}`);
+        }
+        
+        // Look for any canvas or map elements that might contain the burn ban image
+        const mapElement = await page.$('#section-to-print, .map-container, canvas, [id*="map"], [class*="map"]') || 
+                           await page.$('body');
+        
+        if (mapElement) {
+          const filename = 'Arkansas_Burn_Ban.png';
+          const filePath = path.join(userDocumentsPath, 'ForecastImages', filename);
+          
+          // Ensure the directory exists
+          await fs.mkdir(path.dirname(filePath), { recursive: true });
+          
+          // Take a screenshot of the map element
+          await mapElement.screenshot({ 
+            path: filePath,
+            type: 'png'
+          });
+          
+          // Verify the file was created and has reasonable size
+          const stats = await fs.stat(filePath);
+          if (stats.size < 1024) { // Less than 1KB indicates likely failure
+            throw new Error('Screenshot file is too small, likely capture failed');
+          }
+          
+          console.log(`Arkansas burn ban map saved successfully to: ${filePath} (${Math.round(stats.size / 1024)}KB)`);
+        } else {
+          throw new Error('Could not find any suitable elements to capture on Arkansas burn ban page');
+        }
+        
+      } catch (error) {
+        console.error('Error capturing Arkansas burn ban map:', error.message);
+        
+        // Create an error placeholder image if capture fails
+        try {
+          const errorFilename = 'Arkansas_Burn_Ban_ERROR.txt';
+          const errorFilePath = path.join(userDocumentsPath, 'ForecastImages', errorFilename);
+          const errorMessage = `Arkansas Burn Ban Capture Failed\n\nTimestamp: ${new Date().toISOString()}\nError: ${error.message}\n\nThe Arkansas burn ban website may be temporarily unavailable.`;
+          
+          await fs.mkdir(path.dirname(errorFilePath), { recursive: true });
+          await fs.writeFile(errorFilePath, errorMessage);
+          
+          console.log(`Error details saved to: ${errorFilePath}`);
+        } catch (writeError) {
+          console.error('Failed to write error file:', writeError.message);
+        }
+      } finally {
+        // Always close the browser, even if there was an error
+        if (browser) {
+          try {
+            await browser.close();
+          } catch (closeError) {
+            console.error('Error closing browser:', closeError.message);
+          }
+        }
+      }
+    }
+
+    async function pollImages() {
       console.log('Polling images...');
       
+      // Capture Arkansas burn ban map if enabled
+      if (enableArkansasBurnBan) {
+        await captureArkansasBurnBan();
+      }
+      
+      // Process regular image configurations
       for (const entry of imageConfig) {
         const { url, name } = entry;
         try {
@@ -627,8 +757,8 @@ import os from 'os';
     }
 
     async function startImagePolling() {
-      if (imageConfig.length === 0) {
-        console.log("No images configured for polling.");
+      if (imageConfig.length === 0 && !enableArkansasBurnBan) {
+        console.log("No images or Arkansas burn ban configured for polling.");
         return;
       }
 

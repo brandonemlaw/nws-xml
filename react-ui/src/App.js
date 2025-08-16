@@ -12,6 +12,7 @@ function App() {
   const [imagePollInterval, setImagePollInterval] = useState(1800);
   const [newImageUrl, setNewImageUrl] = useState('');
   const [newImageName, setNewImageName] = useState('');
+  const [enableArkansasBurnBan, setEnableArkansasBurnBan] = useState(false);
 
   // Fetch the current configuration when the component loads
   useEffect(() => {
@@ -21,6 +22,7 @@ function App() {
         setPollInterval(response.data.pollInterval / 1000);
         setImageConfig(response.data.imageConfig || []);
         setImagePollInterval((response.data.imagePollInterval || 1800000) / 1000);
+        setEnableArkansasBurnBan(response.data.enableArkansasBurnBan || false);
       })
       .catch(error => console.error('Error fetching config:', error));
   }, []);
@@ -112,6 +114,17 @@ function App() {
         setImageConfig(response.data.imageConfig);
       })
       .catch(error => console.error('Error deleting image:', error));
+  };
+
+  // Handle Arkansas burn ban toggle
+  const handleArkansasBurnBanToggle = (e) => {
+    const enabled = e.target.checked;
+    setEnableArkansasBurnBan(enabled);
+    axios.post('/api/arkansasBurnBan', { enabled })
+      .then(response => {
+        console.log('Arkansas burn ban setting updated');
+      })
+      .catch(error => console.error('Error updating Arkansas burn ban setting:', error));
   };
 
   return (
@@ -253,6 +266,22 @@ function App() {
           <button type="submit">Save</button>
         </div>
       </form>
+
+      {/* Arkansas Burn Ban checkbox */}
+      <h3>Special Features</h3>
+      <div>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={enableArkansasBurnBan}
+            onChange={handleArkansasBurnBanToggle}
+          />
+          Enable Arkansas Burn Ban Map
+        </label>
+        <p style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
+          Automatically captures and saves the Arkansas burn ban map image every refresh cycle.
+        </p>
+      </div>
     </div>
   );
 }

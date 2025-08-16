@@ -13,6 +13,8 @@ function App() {
   const [newImageUrl, setNewImageUrl] = useState('');
   const [newImageName, setNewImageName] = useState('');
   const [enableArkansasBurnBan, setEnableArkansasBurnBan] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
 
   // Fetch the current configuration when the component loads
   useEffect(() => {
@@ -27,16 +29,49 @@ function App() {
       .catch(error => console.error('Error fetching config:', error));
   }, []);
 
+  // Helper functions for showing messages
+  const showError = (message) => {
+    setErrorMessage(message);
+    setSuccessMessage('');
+    setTimeout(() => setErrorMessage(''), 5000); // Clear after 5 seconds
+  };
+
+  const showSuccess = (message) => {
+    setSuccessMessage(message);
+    setErrorMessage('');
+    setTimeout(() => setSuccessMessage(''), 3000); // Clear after 3 seconds
+  };
+
   // Handle manual refresh
   const handleRefresh = (e) => {
     e.preventDefault();
+    showSuccess('Refreshing weather data...');
     axios.post('/api/refresh', {})
-      .catch(error => console.error('Error refreshing data:', error));
+      .then(() => showSuccess('Weather data refresh initiated'))
+      .catch(error => {
+        console.error('Error refreshing data:', error);
+        showError('Failed to refresh weather data. Please check your connection.');
+      });
   };
 
   // Handle adding a new location
   const handleSubmit = (e) => {
     e.preventDefault();
+    
+    // Basic validation
+    if (!newLatitude || !newLongitude || !newName) {
+      showError('Please fill in all fields');
+      return;
+    }
+    
+    const lat = parseFloat(newLatitude);
+    const lng = parseFloat(newLongitude);
+    
+    if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      showError('Please enter valid latitude (-90 to 90) and longitude (-180 to 180) values');
+      return;
+    }
+    
     axios.post('/api/config', {
       latitude: newLatitude,
       longitude: newLongitude,
@@ -48,8 +83,12 @@ function App() {
       setNewLatitude('');
       setNewLongitude('');
       setNewName('');
+      showSuccess(`Location "${newName}" added successfully`);
     })
-    .catch(error => console.error('Error updating config:', error));
+    .catch(error => {
+      console.error('Error updating config:', error);
+      showError('Failed to add location. Please check your input and try again.');
+    });
   };
 
   // Handle setting the refresh interval
@@ -122,13 +161,45 @@ function App() {
     setEnableArkansasBurnBan(enabled);
     axios.post('/api/arkansasBurnBan', { enabled })
       .then(response => {
+        showSuccess(`Arkansas burn ban ${enabled ? 'enabled' : 'disabled'}`);
         console.log('Arkansas burn ban setting updated');
       })
-      .catch(error => console.error('Error updating Arkansas burn ban setting:', error));
+      .catch(error => {
+        console.error('Error updating Arkansas burn ban setting:', error);
+        setEnableArkansasBurnBan(!enabled); // Revert the checkbox
+        showError('Failed to update Arkansas burn ban setting');
+      });
   };
 
   return (
     <div className="container">
+      {/* Error and Success Messages */}
+      {errorMessage && (
+        <div style={{
+          backgroundColor: '#ffebee',
+          color: '#c62828',
+          padding: '10px',
+          borderRadius: '4px',
+          marginBottom: '15px',
+          border: '1px solid #ffcdd2'
+        }}>
+          {errorMessage}
+        </div>
+      )}
+      
+      {successMessage && (
+        <div style={{
+          backgroundColor: '#e8f5e8',
+          color: '#2e7d32',
+          padding: '10px',
+          borderRadius: '4px',
+          marginBottom: '15px',
+          border: '1px solid #c8e6c9'
+        }}>
+          {successMessage}
+        </div>
+      )}
+
       {/* Manual refresh button */}
       <form>
         <button onClick={handleRefresh}>Refresh Weather Data</button>

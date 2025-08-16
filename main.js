@@ -126,87 +126,143 @@ import puppeteer from 'puppeteer';
     }
 
     async function fetchNWSData(latitude, longitude) {
-      try {
-        const userAgent = 'github.com/brandonemlaw';
+      const maxRetries = 3;
+      let lastError;
+      
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          console.log(`Fetching NWS data for ${latitude}, ${longitude} (attempt ${attempt}/${maxRetries})`);
+          
+          const userAgent = 'github.com/brandonemlaw/nws-xml-converter';
+          const timeout = 15000; // 15 second timeout
     
-        const pointResponse = await fetch(`https://api.weather.gov/points/${latitude},${longitude}`, {
-          headers: {
-            'User-Agent': userAgent
-          }
-        });
-        
-        if (!pointResponse.ok) {
-          throw new Error(`Error fetching point data: ${pointResponse.statusText}`);
-        }
-        
-        const pointData = await pointResponse.json();
-    
-        // Get forecast and hourly forecast URLs
-        const forecastUrl = pointData.properties.forecast;
-        const hourlyUrl = pointData.properties.forecastHourly;
-    
-        // Get the observation stations URL
-        const observationStationsUrl = pointData.properties.observationStations;
-        const stationListResponse = await fetch(observationStationsUrl, {
-          headers: {
-            'User-Agent': userAgent
-          }
-        });
-    
-        if (!stationListResponse.ok) {
-          throw new Error(`Error fetching station list: ${stationListResponse.statusText}`);
-        }
-    
-        const stationListData = await stationListResponse.json();
-    
-        // Extract the first station ID from the features list
-        const firstStation = stationListData.features[0];
-        if (!firstStation) {
-          throw new Error("No observation stations found.");
-        }
-    
-        const stationId = firstStation.id; // e.g., 'https://api.weather.gov/stations/KSRC'
-    
-        // Fetch the current conditions for the first station
-        const currentConditionsUrl = `${stationId}/observations/latest`;
-        const currentConditionsResponse = await fetch(currentConditionsUrl, {
-          headers: {
-            'User-Agent': userAgent
-          }
-        });
-    
-        if (!currentConditionsResponse.ok) {
-          throw new Error(`Error fetching current conditions: ${currentConditionsResponse.statusText}`);
-        }
-    
-        const currentData = await currentConditionsResponse.json();
-    
-        // Fetch forecast and hourly forecast data
-        const [forecastResponse, hourlyResponse] = await Promise.all([
-          fetch(forecastUrl, {
+          // Fetch point data with timeout
+          const pointResponse = await fetch(`https://api.weather.gov/points/${latitude},${longitude}`, {
             headers: {
               'User-Agent': userAgent
+            },
+            timeout: timeout
+          });
+          
+          if (!pointResponse.ok) {
+            if (pointResponse.status === 404) {
+              throw new Error(`Location not found in NWS system (${latitude}, ${longitude})`);
+            } else if (pointResponse.status >= 500) {
+              throw new Error(`NWS server error: ${pointResponse.status} ${pointResponse.statusText}`);
+            } else {
+              throw new Error(`Error fetching point data: ${pointResponse.status} ${pointResponse.statusText}`);
             }
-          }),
-          fetch(hourlyUrl, {
+          }
+          
+          const pointData = await pointResponse.json();
+          
+          // Validate point data structure
+          if (!pointData.properties || !pointData.properties.forecast || !pointData.properties.forecastHourly) {
+            throw new Error('Invalid point data structure from NWS API');
+          }
+    
+          // Get forecast and hourly forecast URLs
+          const forecastUrl = pointData.properties.forecast;
+          const hourlyUrl = pointData.properties.forecastHourly;
+    
+          // Get the observation stations URL
+          const observationStationsUrl = pointData.properties.observationStations;
+          
+          if (!observationStationsUrl) {
+            throw new Error('No observation stations URL provided by NWS API');
+          }
+          
+          const stationListResponse = await fetch(observationStationsUrl, {
             headers: {
               'User-Agent': userAgent
-            }
-          })
-        ]);
+            },
+            timeout: timeout
+          });
     
-        if (!forecastResponse.ok || !hourlyResponse.ok) {
-          throw new Error('Error fetching forecast or hourly forecast data');
+          if (!stationListResponse.ok) {
+            throw new Error(`Error fetching station list: ${stationListResponse.status} ${stationListResponse.statusText}`);
+          }
+    
+          const stationListData = await stationListResponse.json();
+    
+          // Extract the first station ID from the features list
+          const firstStation = stationListData.features?.[0];
+          if (!firstStation || !firstStation.id) {
+            throw new Error("No valid observation stations found for this location");
+          }
+    
+          const stationId = firstStation.id; // e.g., 'https://api.weather.gov/stations/KSRC'
+    
+          // Fetch the current conditions for the first station
+          const currentConditionsUrl = `${stationId}/observations/latest`;
+          const currentConditionsResponse = await fetch(currentConditionsUrl, {
+            headers: {
+              'User-Agent': userAgent
+            },
+            timeout: timeout
+          });
+    
+          if (!currentConditionsResponse.ok) {
+            console.warn(`Current conditions unavailable: ${currentConditionsResponse.status} ${currentConditionsResponse.statusText}`);
+            // Continue without current conditions rather than failing completely
+          }
+    
+          const currentData = currentConditionsResponse.ok ? await currentConditionsResponse.json() : null;
+    
+          // Fetch forecast and hourly forecast data
+          const [forecastResponse, hourlyResponse] = await Promise.all([
+            fetch(forecastUrl, {
+              headers: {
+                'User-Agent': userAgent
+              },
+              timeout: timeout
+            }),
+            fetch(hourlyUrl, {
+              headers: {
+                'User-Agent': userAgent
+              },
+              timeout: timeout
+            })
+          ]);
+    
+          if (!forecastResponse.ok) {
+            throw new Error(`Forecast data error: ${forecastResponse.status} ${forecastResponse.statusText}`);
+          }
+          
+          if (!hourlyResponse.ok) {
+            throw new Error(`Hourly forecast data error: ${hourlyResponse.status} ${hourlyResponse.statusText}`);
+          }
+    
+          const forecastData = await forecastResponse.json();
+          const hourlyData = await hourlyResponse.json();
+          
+          // Validate forecast data structure
+          if (!forecastData.properties || !forecastData.properties.periods) {
+            throw new Error('Invalid forecast data structure from NWS API');
+          }
+          
+          if (!hourlyData.properties || !hourlyData.properties.periods) {
+            throw new Error('Invalid hourly data structure from NWS API');
+          }
+          
+          console.log(`NWS data fetched successfully for ${latitude}, ${longitude}`);
+          return { forecastData, hourlyData, currentData };
+          
+        } catch (error) {
+          lastError = error;
+          console.warn(`NWS data fetch attempt ${attempt} failed: ${error.message}`);
+          
+          if (attempt < maxRetries) {
+            const delay = attempt * 3000; // Increasing delay: 3s, 6s, 9s
+            console.log(`Waiting ${delay}ms before retry...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
         }
-    
-        const forecastData = await forecastResponse.json();
-        const hourlyData = await hourlyResponse.json();
-    
-        return { forecastData, hourlyData, currentData };
-      } catch (error) {
-        console.error('Error fetching NWS data:', error);
-        return null;
       }
+      
+      // All attempts failed
+      console.error(`Failed to fetch NWS data after ${maxRetries} attempts: ${lastError.message}`);
+      return null;
     }
 
     // Format the hourly forecast based on absolute and relative time
@@ -505,7 +561,15 @@ import puppeteer from 'puppeteer';
     }
 
     async function poll() {
-      if (urlConfig.length === 0) return;
+      if (urlConfig.length === 0) {
+        console.log('No locations configured, skipping weather data poll');
+        setTimeout(poll, pollInterval);
+        return;
+      }
+
+      console.log(`Starting weather data poll for ${urlConfig.length} location(s)`);
+      let successCount = 0;
+      let errorCount = 0;
 
       function sanitizeFileName(value) {
         return value.replace(/[\/\\,:.]/g, '-');
@@ -516,14 +580,24 @@ import puppeteer from 'puppeteer';
         try {
           console.log(`Polling NWS data for ${name} at ${latitude}, ${longitude}`);
           const data = await fetchNWSData(latitude, longitude);
-          if (!data) continue;
+          
+          if (!data) {
+            errorCount++;
+            await createErrorFiles(name, 'Failed to fetch weather data from NWS API');
+            continue;
+          }
 
           const { forecastData, hourlyData, currentData } = data;
+          
+          // Validate that we have the minimum required data
+          if (!hourlyData?.properties?.periods || !forecastData?.properties?.periods) {
+            throw new Error('Invalid or incomplete forecast data received from NWS');
+          }
 
           const hourlyForecast = formatHourlyForecast(hourlyData);
           const dayAndNightForecasts = formatDayAndNightForecast(forecastData);
           const dailyForecasts = formatDailyForecast(forecastData, currentData);
-          const currentConditions = formatCurrentConditions(currentData);
+          const currentConditions = currentData ? formatCurrentConditions(currentData) : null;
 
           await fs.mkdir(path.join(userDocumentsPath, 'NWSForecastXMLFiles'), { recursive: true });
 
@@ -547,27 +621,46 @@ import puppeteer from 'puppeteer';
           const dayAndNightRelativeBuilder = new xml2js.Builder({ headless: true });
           const dayAndNightRelativeXml = dayAndNightRelativeBuilder.buildObject({ DayAndNightForecast: dayAndNightForecasts.relative });
 
-          // Build XML for Current Conditions
-          const currentBuilder = new xml2js.Builder({ headless: true });
-          const currentXml = currentBuilder.buildObject({ CurrentConditions: currentConditions });
+          // Build XML for Current Conditions (only if we have current data)
+          let currentXml = '';
+          if (currentConditions) {
+            const currentBuilder = new xml2js.Builder({ headless: true });
+            currentXml = currentBuilder.buildObject({ CurrentConditions: currentConditions });
+          } else {
+            // Create placeholder current conditions
+            currentXml = `<CurrentConditions><Error>Current conditions unavailable</Error><Timestamp>${new Date().toISOString()}</Timestamp></CurrentConditions>`;
+          }
 
-          // Write files
+          // Write files with error handling
           const sanitizedFileName = sanitizeFileName(name);
-          await writeFile(`${sanitizedFileName}-HourlyForecast.xml`, hourlyXml);
-          await writeFile(`${sanitizedFileName}-DayAndNightForecast-BySpecificDate.xml`, dayAndNightAbsoluteXml);
-          await writeFile(`${sanitizedFileName}-DayAndNightForecast-ByDaysOut.xml`, dayAndNightRelativeXml);
-          await writeFile(`${sanitizedFileName}-DailyForecast-BySpecificDate.xml`, dailyAbsoluteXml);
-          await writeFile(`${sanitizedFileName}-DailyForecast-ByDaysOut.xml`, dailyRelativeXml);
-          await writeFile(`${sanitizedFileName}-CurrentConditions.xml`, currentXml);
-
-          // --- NEW: Write alert XMLs for this location ---
-          // (We call the alert polling for all locations after the forecast polling)
-          await pollAlertsForLocations();
+          const fileOperations = [
+            writeFile(`${sanitizedFileName}-HourlyForecast.xml`, hourlyXml),
+            writeFile(`${sanitizedFileName}-DayAndNightForecast-BySpecificDate.xml`, dayAndNightAbsoluteXml),
+            writeFile(`${sanitizedFileName}-DayAndNightForecast-ByDaysOut.xml`, dayAndNightRelativeXml),
+            writeFile(`${sanitizedFileName}-DailyForecast-BySpecificDate.xml`, dailyAbsoluteXml),
+            writeFile(`${sanitizedFileName}-DailyForecast-ByDaysOut.xml`, dailyRelativeXml),
+            writeFile(`${sanitizedFileName}-CurrentConditions.xml`, currentXml)
+          ];
+          
+          await Promise.all(fileOperations);
+          successCount++;
           console.log(`Data for ${name} written successfully.`);
+          
         } catch (error) {
-          console.error(`Error polling data for ${name}:`, error);
+          errorCount++;
+          console.error(`Error polling data for ${name}:`, error.message);
+          await createErrorFiles(name, error.message);
         }
       }
+      
+      // Poll alerts after processing all weather locations
+      try {
+        await pollAlertsForLocations();
+      } catch (error) {
+        console.error('Error polling alerts:', error.message);
+      }
+      
+      console.log(`Weather poll completed: ${successCount} successful, ${errorCount} failed`);
       setTimeout(poll, pollInterval);
     }
 
@@ -575,6 +668,38 @@ import puppeteer from 'puppeteer';
       const filePath = path.join(userDocumentsPath, 'NWSForecastXMLFiles', filename);
       await fs.writeFile(filePath, content);
       console.log(`File written to ${filePath}`);
+    }
+
+    async function createErrorFiles(locationName, errorMessage) {
+      try {
+        function sanitizeFileName(value) {
+          return value.replace(/[\/\\,:.]/g, '-');
+        }
+        
+        const sanitizedFileName = sanitizeFileName(locationName);
+        const timestamp = new Date().toISOString();
+        const errorContent = `<Error><Message>${errorMessage}</Message><Timestamp>${timestamp}</Timestamp><Location>${locationName}</Location></Error>`;
+        
+        // Create error files for all expected forecast types
+        const errorFiles = [
+          `${sanitizedFileName}-HourlyForecast.xml`,
+          `${sanitizedFileName}-DayAndNightForecast-BySpecificDate.xml`,
+          `${sanitizedFileName}-DayAndNightForecast-ByDaysOut.xml`,
+          `${sanitizedFileName}-DailyForecast-BySpecificDate.xml`,
+          `${sanitizedFileName}-DailyForecast-ByDaysOut.xml`,
+          `${sanitizedFileName}-CurrentConditions.xml`
+        ];
+        
+        await fs.mkdir(path.join(userDocumentsPath, 'NWSForecastXMLFiles'), { recursive: true });
+        
+        for (const filename of errorFiles) {
+          await writeFile(filename, errorContent);
+        }
+        
+        console.log(`Error files created for ${locationName}`);
+      } catch (writeError) {
+        console.error(`Failed to create error files for ${locationName}:`, writeError.message);
+      }
     }
 
     async function startPolling() {
@@ -594,26 +719,81 @@ import puppeteer from 'puppeteer';
     }
 
     async function downloadImage(url, filename) {
-      try {
-        const response = await fetch(url);
-        if (!response.ok) {
-          throw new Error(`Error downloading image: ${response.statusText}`);
+      const maxRetries = 3;
+      let lastError;
+      
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          console.log(`Downloading image ${filename} (attempt ${attempt}/${maxRetries})`);
+          
+          const response = await fetch(url, {
+            timeout: 30000, // 30 second timeout
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+            }
+          });
+          
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          }
+          
+          const contentType = response.headers.get('content-type');
+          if (!contentType || !contentType.startsWith('image/')) {
+            throw new Error(`Invalid content type: ${contentType}. Expected image.`);
+          }
+          
+          const buffer = await response.buffer();
+          
+          if (buffer.length === 0) {
+            throw new Error('Downloaded image is empty');
+          }
+          
+          if (buffer.length < 512) { // Less than 512 bytes likely indicates an error page
+            throw new Error(`Downloaded image is too small (${buffer.length} bytes), likely an error response`);
+          }
+          
+          const imagePath = path.join(userDocumentsPath, 'ForecastImages', filename);
+          
+          // Ensure directory exists
+          await fs.mkdir(path.dirname(imagePath), { recursive: true });
+          
+          // Write image file
+          await fs.writeFile(imagePath, buffer);
+          
+          // Verify file was written correctly
+          const stats = await fs.stat(imagePath);
+          console.log(`Image ${filename} downloaded successfully to ${imagePath} (${Math.round(stats.size / 1024)}KB)`);
+          return true;
+          
+        } catch (error) {
+          lastError = error;
+          console.warn(`Download attempt ${attempt} failed for ${filename}: ${error.message}`);
+          
+          if (attempt < maxRetries) {
+            const delay = attempt * 2000; // Increasing delay: 2s, 4s, 6s
+            console.log(`Waiting ${delay}ms before retry...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
         }
-        
-        const buffer = await response.buffer();
-        const imagePath = path.join(userDocumentsPath, 'NWSForecastImages', filename);
-        
-        // Ensure directory exists
-        await fs.mkdir(path.dirname(imagePath), { recursive: true });
-        
-        // Write image file
-        await fs.writeFile(imagePath, buffer);
-        console.log(`Image downloaded to ${imagePath}`);
-        return true;
-      } catch (error) {
-        console.error(`Error downloading image from ${url}:`, error);
-        return false;
       }
+      
+      // All attempts failed, create error file
+      console.error(`Failed to download image ${filename} after ${maxRetries} attempts: ${lastError.message}`);
+      
+      try {
+        const errorFilename = filename.replace(/\.[^/.]+$/, '') + '_ERROR.txt';
+        const errorFilePath = path.join(userDocumentsPath, 'ForecastImages', errorFilename);
+        const errorMessage = `Image Download Failed\n\nFilename: ${filename}\nURL: ${url}\nTimestamp: ${new Date().toISOString()}\nError: ${lastError.message}\n\nThe image source may be temporarily unavailable.`;
+        
+        await fs.mkdir(path.dirname(errorFilePath), { recursive: true });
+        await fs.writeFile(errorFilePath, errorMessage);
+        
+        console.log(`Error details saved to: ${errorFilePath}`);
+      } catch (writeError) {
+        console.error('Failed to write image error file:', writeError.message);
+      }
+      
+      return false;
     }
 
     async function captureArkansasBurnBan() {

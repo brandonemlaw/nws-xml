@@ -11,11 +11,18 @@ import os from 'os';
 import puppeteer from 'puppeteer';
 import { createRequire } from 'module';
 import { getWebhookUrl } from './loggerLookup.js';
+import log from 'electron-log';
 
 // Initialize require before any usage
 const require = createRequire(import.meta.url);
 // Require CommonJS electron-updater safely after createRequire
 const { autoUpdater } = require('electron-updater');
+
+// Attach logging for visibility
+autoUpdater.logger = log;
+autoUpdater.logger.transports.file.level = 'info';
+// Ensure UI-driven flow (no auto popups/downloads)
+autoUpdater.autoDownload = false;
 
 (async () => {
   try {
@@ -1153,6 +1160,36 @@ const { autoUpdater } = require('electron-updater');
         textOutput += `Generated: ${new Date().toLocaleString()}\n\n`;
         
         graphicNameTemplates.forEach((template, index) => {
+          let finalTagName = sanitizedTagName;
+          let counter = 1;
+          while (graphicNames[finalTagName]) {
+            finalTagName = sanitizedTagName + '_' + counter;
+            counter++;
+          }
+          
+          graphicNames[finalTagName] = graphicName;
+        });
+        
+        // Build XML
+        const builder = new xml2js.Builder({ 
+          ...xmlBuilderOptions,
+          renderOpts: { 'pretty': true, 'indent': '  ', 'newline': '\n' }
+        });
+        const xml = builder.buildObject({ GraphicNames: graphicNames });
+        
+        // Write to file
+        const filePath = path.join(userDocumentsPath, 'NWSForecastXMLFiles', 'GraphicNames.xml');
+        await fs.mkdir(path.dirname(filePath), { recursive: true });
+        await fs.writeFile(filePath, xml);
+        
+        console.log(`Graphic names XML written to ${filePath}`);
+        
+        // Also create a simple text version for easy reading
+        let textOutput = 'Generated Graphic Names\n';
+        textOutput += '=====================\n';
+        textOutput += `Generated: ${new Date().toLocaleString()}\n\n`;
+        
+        graphicNameTemplates.forEach((template, index) => {
           const { dayNumber, nameTemplate } = template;
           const dayName = getDayName(dayNumber);
           const graphicName = nameTemplate.replace(/\{day\}/g, dayName);
@@ -1752,6 +1789,8 @@ const { autoUpdater } = require('electron-updater');
           updateStatus = { ...updateStatus, state: 'error', lastError: err?.message || String(err) };
           sendDiagnostics('nws_xml_error_{id}', { scope: 'updater', error: err?.message || String(err) }).catch(() => {});
         });
+
+
 
         autoUpdater.on('download-progress', (progress) => {
           console.log(`[updater] Download progress: ${Math.round(progress.percent)}%`);

@@ -24,6 +24,8 @@ function App() {
   const [loggingId, setLoggingId] = useState('');
   const [loggingIdInput, setLoggingIdInput] = useState('');
   const [statusBanner, setStatusBanner] = useState({ message: '', type: 'ok', lastUpdated: null });
+  // Update status for auto-updater banner
+  const [updateStatus, setUpdateStatus] = useState({ state: 'idle', info: null, progress: null, lastChecked: null, lastError: null });
 
   // Fetch the current configuration when the component loads
   useEffect(() => {
@@ -39,6 +41,8 @@ function App() {
         setLoggingId(response.data.loggingId || '');
         setLoggingIdInput(response.data.loggingId || '');
         setStatusBanner(response.data.statusBanner || { message: '', type: 'ok', lastUpdated: null });
+        // Initialize updater status if backend included it
+        if (response.data.updateStatus) setUpdateStatus(response.data.updateStatus);
       })
       .catch(error => console.error('Error fetching config:', error));
   }, []);
@@ -50,6 +54,16 @@ function App() {
         .then(res => setStatusBanner(res.data))
         .catch(() => {});
     }, 15000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Poll updater status periodically (kept light; backend emits events)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      axios.get('/api/update/status')
+        .then(res => setUpdateStatus(res.data))
+        .catch(() => {});
+    }, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -363,8 +377,106 @@ function App() {
       });
   };
 
+  // Updater actions
+  const handleCheckForUpdates = () => {
+    axios.post('/api/update/check').catch(() => {});
+  };
+  const handleDownloadUpdate = () => {
+    axios.post('/api/update/download').catch(() => {});
+  };
+  const handleInstallUpdate = () => {
+    axios.post('/api/update/install').catch(() => {});
+  };
+
+  // Render updater banner (top of app)
+  const renderUpdateBanner = () => {
+    const state = updateStatus?.state;
+    if (!state || state === 'idle' || state === 'not-available') return null;
+
+    const containerStyle = {
+      backgroundColor: '#e3f2fd',
+      color: '#0d47a1',
+      padding: '10px',
+      borderRadius: '4px',
+      marginBottom: '15px',
+      border: '1px solid #90caf9',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: '10px',
+      flexWrap: 'wrap'
+    };
+    const btn = {
+      padding: '6px 12px',
+      borderRadius: '4px',
+      border: 'none',
+      cursor: 'pointer'
+    };
+    const primary = { ...btn, backgroundColor: '#1976d2', color: 'white' };
+    const neutral = { ...btn, backgroundColor: '#e0e0e0', color: '#333' };
+    const danger = { ...btn, backgroundColor: '#d32f2f', color: 'white' };
+
+    const ver = updateStatus?.info?.version ? `v${updateStatus.info.version}` : '';
+
+    if (state === 'checking') {
+      return (
+        <div style={containerStyle}>
+          <div>🔎 Checking for updates...</div>
+          <div>
+            <button style={neutral} onClick={handleCheckForUpdates}>Check Again</button>
+          </div>
+        </div>
+      );
+    }
+    if (state === 'available') {
+      return (
+        <div style={containerStyle}>
+          <div>⬆️ Update available {ver}</div>
+          <div>
+            <button style={primary} onClick={handleDownloadUpdate}>Download</button>
+          </div>
+        </div>
+      );
+    }
+    if (state === 'downloading') {
+      const pct = updateStatus?.progress?.percent ? Math.round(updateStatus.progress.percent) : 0;
+      return (
+        <div style={containerStyle}>
+          <div>⬇️ Downloading update... {pct}%</div>
+          <div>
+            <button style={neutral} disabled>Downloading...</button>
+          </div>
+        </div>
+      );
+    }
+    if (state === 'downloaded') {
+      return (
+        <div style={containerStyle}>
+          <div>✅ Update {ver} is ready to install</div>
+          <div>
+            <button style={danger} onClick={handleInstallUpdate}>Restart Now</button>
+          </div>
+        </div>
+      );
+    }
+    if (state === 'error') {
+      return (
+        <div style={{ ...containerStyle, backgroundColor: '#ffebee', color: '#b71c1c', borderColor: '#ffcdd2' }}>
+          <div>⚠️ Update error: {updateStatus?.lastError || 'Unknown error'}</div>
+          <div>
+            <button style={neutral} onClick={handleCheckForUpdates}>Retry</button>
+          </div>
+        </div>
+      );
+    }
+    return null;
+  };
+
   return (
     <div className="container">
+      {/* Update Banner (always renders above other banners) */}
+      {renderUpdateBanner()}
+
       {/* Status Banner (shows only on error) */}
       {statusBanner?.type === 'error' && statusBanner?.message ? (
         <div style={{
@@ -567,7 +679,7 @@ function App() {
             {/* Form to configure a new image */}
             <h3>Add New Image Source</h3>
             <form onSubmit={handleImageSubmit}>
-              <div style={{ marginBottom: '10px' }}>
+               <div style={{ marginBottom: '10px' }}>
                 <label>
                   Image URL:
                   <input

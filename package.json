@@ -1,6 +1,6 @@
 {
   "name": "nws-xml-converter",
-  "version": "1.4.2",
+  "version": "1.4.3s",
   "description": "",
   "type": "module",
   "main": "main.js",

@@ -1719,52 +1719,71 @@ const { autoUpdater } = require('electron-updater');
     // New: Wire electron-updater (Windows/NSIS only)
     function initAutoUpdater() {
       try {
+        console.log('[updater] Initializing auto-updater...');
+        
         // Do not auto-download; UI will control when to download/apply
         autoUpdater.autoDownload = false;
         autoUpdater.autoInstallOnAppQuit = false;
         autoUpdater.allowDowngrade = false;
         autoUpdater.allowPrerelease = false;
 
+        // Add logging
+        autoUpdater.logger = console;
+
         autoUpdater.on('checking-for-update', () => {
+          console.log('[updater] Checking for update...');
           updateStatus = { ...updateStatus, state: 'checking', lastChecked: new Date().toISOString(), lastError: null };
         });
 
         autoUpdater.on('update-available', (info) => {
+          console.log('[updater] Update available:', info?.version);
           updateStatus = { ...updateStatus, state: 'available', info, lastChecked: new Date().toISOString(), lastError: null };
           // Optional telemetry
           sendDiagnostics('nws_xml_success_{id}', { scope: 'updater', event: 'available', version: info?.version }, 'data').catch(() => {});
         });
 
         autoUpdater.on('update-not-available', (info) => {
+          console.log('[updater] Update not available. Current version is up to date.');
           updateStatus = { ...updateStatus, state: 'not-available', info, lastChecked: new Date().toISOString(), lastError: null, progress: null };
         });
 
         autoUpdater.on('error', (err) => {
+          console.error('[updater] Update error:', err?.message || String(err));
           updateStatus = { ...updateStatus, state: 'error', lastError: err?.message || String(err) };
           sendDiagnostics('nws_xml_error_{id}', { scope: 'updater', error: err?.message || String(err) }).catch(() => {});
         });
 
         autoUpdater.on('download-progress', (progress) => {
+          console.log(`[updater] Download progress: ${Math.round(progress.percent)}%`);
           updateStatus = { ...updateStatus, state: 'downloading', progress };
         });
 
         autoUpdater.on('update-downloaded', (info) => {
+          console.log('[updater] Update downloaded:', info?.version);
           updateStatus = { ...updateStatus, state: 'downloaded', info };
           // From UI, call /api/update/install to apply
         });
 
-        // Background check every 6 hours; does not auto-download
-        setInterval(() => {
-          autoUpdater.checkForUpdates().catch(() => {});
-        }, 6 * 60 * 60 * 1000);
+        console.log('[updater] Auto-updater initialized successfully');
 
       } catch (e) {
-        console.error('AutoUpdater init failed:', e.message);
+        console.error('[updater] AutoUpdater init failed:', e.message);
         updateStatus = { ...updateStatus, state: 'error', lastError: e.message };
       }
     }
 
-    app.on('ready', () => {
+    // Helper function to perform update check with error handling
+    async function performUpdateCheck() {
+      try {
+        console.log('[updater] Performing update check...');
+        await autoUpdater.checkForUpdates();
+      } catch (error) {
+        console.error('[updater] Failed to check for updates:', error.message);
+        updateStatus = { ...updateStatus, state: 'error', lastError: error.message };
+      }
+ }
+
+    app.on('ready', async () => {
       console.log('Electron app is ready.');
 
       server.listen(PORT, () => {
@@ -1784,9 +1803,21 @@ const { autoUpdater } = require('electron-updater');
       startPolling();
       startImagePolling();
 
-      // New: initialize updater and kick one initial check (non-blocking, no popup)
+      // Initialize updater first
       initAutoUpdater();
-      autoUpdater.checkForUpdates().catch(() => {});
+      
+      // Wait a moment for the app to fully initialize, then check for updates
+      setTimeout(() => {
+        console.log('[updater] Performing initial update check...');
+        performUpdateCheck();
+        
+        // Schedule periodic checks every 6 hours
+        setInterval(() => {
+          console.log('[updater] Performing scheduled update check...');
+          performUpdateCheck();
+        }, 6 * 60 * 60 * 1000);
+        
+      }, 5000); // Wait 5 seconds after app ready
     });
 
     app.on('window-all-closed', () => {

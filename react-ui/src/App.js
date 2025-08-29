@@ -691,7 +691,7 @@ function App() {
             <h2>Settings & Configuration</h2>
 
             {/* Diagnostics & Logging */}
-            <h3>Diagnostics & Logging</h3>
+            <h3>Support</h3>
             <div style={{ marginBottom: '20px' }}>
               <form onSubmit={handleSaveLoggingId} style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
                 <label>

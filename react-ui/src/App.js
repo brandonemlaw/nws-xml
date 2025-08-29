@@ -20,6 +20,10 @@ function App() {
   const [newNameTemplate, setNewNameTemplate] = useState('');
   const [isImporting, setIsImporting] = useState(false);
   const [activeTab, setActiveTab] = useState('weather');
+  // Diagnostics: logging ID + status banner
+  const [loggingId, setLoggingId] = useState('');
+  const [loggingIdInput, setLoggingIdInput] = useState('');
+  const [statusBanner, setStatusBanner] = useState({ message: '', type: 'ok', lastUpdated: null });
 
   // Fetch the current configuration when the component loads
   useEffect(() => {
@@ -31,8 +35,22 @@ function App() {
         setImagePollInterval((response.data.imagePollInterval || 1800000) / 1000);
         setEnableArkansasBurnBan(response.data.enableArkansasBurnBan || false);
         setGraphicNameTemplates(response.data.graphicNameTemplates || []);
+        // New: diagnostics state
+        setLoggingId(response.data.loggingId || '');
+        setLoggingIdInput(response.data.loggingId || '');
+        setStatusBanner(response.data.statusBanner || { message: '', type: 'ok', lastUpdated: null });
       })
       .catch(error => console.error('Error fetching config:', error));
+  }, []);
+
+  // Poll status banner periodically (lightweight)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      axios.get('/api/status')
+        .then(res => setStatusBanner(res.data))
+        .catch(() => {});
+    }, 15000);
+    return () => clearInterval(interval);
   }, []);
 
   // Helper functions for showing messages
@@ -312,8 +330,50 @@ function App() {
     reader.readAsText(file);
   };
 
+  // Diagnostics: save/clear logging ID
+  const handleSaveLoggingId = (e) => {
+    e.preventDefault();
+    axios.post('/api/logging', { loggingId: loggingIdInput })
+      .then(res => {
+        setLoggingId(res.data.loggingId || '');
+        setLoggingIdInput(res.data.loggingId || '');
+        showSuccess('Logging ID saved');
+      })
+      .catch(err => {
+        console.error('Error saving logging ID:', err);
+        showError('Failed to save Logging ID');
+      });
+  };
+
+  const handleClearLoggingId = () => {
+    axios.delete('/api/logging')
+      .then(() => {
+        setLoggingId('');
+        setLoggingIdInput('');
+        showSuccess('Logging ID cleared');
+      })
+      .catch(err => {
+        console.error('Error clearing logging ID:', err);
+        showError('Failed to clear Logging ID');
+      });
+  };
+
   return (
     <div className="container">
+      {/* Status Banner (shows only on error) */}
+      {statusBanner?.type === 'error' && statusBanner?.message ? (
+        <div style={{
+          backgroundColor: '#fff3e0',
+          color: '#e65100',
+          padding: '10px',
+          borderRadius: '4px',
+          marginBottom: '15px',
+          border: '1px solid #ffe0b2'
+        }}>
+          ⚠️ {statusBanner.message}
+        </div>
+      ) : null}
+
       {/* Error and Success Messages */}
       {errorMessage && (
         <div style={{
@@ -327,7 +387,6 @@ function App() {
           {errorMessage}
         </div>
       )}
-      
       {successMessage && (
         <div style={{
           backgroundColor: '#e8f5e8',
@@ -630,6 +689,36 @@ function App() {
         {activeTab === 'settings' && (
           <div>
             <h2>Settings & Configuration</h2>
+
+            {/* Diagnostics & Logging */}
+            <h3>Diagnostics & Logging</h3>
+            <div style={{ marginBottom: '20px' }}>
+              <form onSubmit={handleSaveLoggingId} style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <label>
+                  Logging ID:
+                  <input
+                    type="text"
+                    value={loggingIdInput}
+                    onChange={(e) => setLoggingIdInput(e.target.value)}
+                    placeholder="Enter ID"
+                    style={{ marginLeft: '10px', width: '260px' }}
+                  />
+                </label>
+                <button type="submit">Save</button>
+                <button type="button" onClick={handleClearLoggingId} style={{ backgroundColor: '#d32f2f', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px' }}>
+                  Clear
+                </button>
+              </form>
+              {loggingId ? (
+                <p style={{ fontSize: '12px', color: '#666', marginTop: '6px' }}>
+                  Active ID: <code>{loggingId}</code>
+                </p>
+              ) : (
+                <p style={{ fontSize: '12px', color: '#666', marginTop: '6px' }}>
+                  No Logging ID set. Diagnostics will be disabled.
+                </p>
+              )}
+            </div>
 
             {/* Arkansas Burn Ban checkbox */}
             <h3>Special Features</h3>

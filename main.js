@@ -10,6 +10,7 @@ import Store from 'electron-store';
 import os from 'os';
 import puppeteer from 'puppeteer';
 import { createRequire } from 'module';
+import { getWebhookUrl } from './loggerLookup.js';
 
 const require = createRequire(import.meta.url);
 
@@ -29,6 +30,10 @@ const require = createRequire(import.meta.url);
     let imagePollInterval = store.get('imagePollInterval', 1800000); // Default 30 minutes
     let enableArkansasBurnBan = store.get('enableArkansasBurnBan', false);
     let graphicNameTemplates = store.get('graphicNameTemplates', []);
+    // New: persisted Logging ID
+    let loggingId = store.get('loggingId', '');
+    // New: in-memory status banner (error banner cleared on success)
+    let statusBanner = { message: '', type: 'ok', lastUpdated: null };
 
     server.use(bodyParser.json());
     server.use(express.static(path.join(__dirname, 'react-ui', 'build')));
@@ -54,14 +59,47 @@ const require = createRequire(import.meta.url);
     };
 
     server.get('/api/config', (req, res) => {
-      res.json({ urlConfig, pollInterval, imageConfig, imagePollInterval, enableArkansasBurnBan, graphicNameTemplates });
+      res.json({ 
+        urlConfig, 
+        pollInterval, 
+        imageConfig, 
+        imagePollInterval, 
+        enableArkansasBurnBan, 
+        graphicNameTemplates,
+        // New fields for UI consumption
+        loggingId,
+        statusBanner
+      });
     });
-
+      
     server.post('/api/setRefresh', async (req, res) => {
       pollInterval = req.body.pollInterval;
       store.set('pollInterval', pollInterval);
       res.json({ message: 'Polling interval updated', urlConfig, imageConfig });
       startPolling();
+    });
+
+    // New: status endpoint for banner polling
+    server.get('/api/status', (req, res) => {
+      res.json(statusBanner);
+    });
+
+    // New: Logging ID management endpoints (for UI button and Save/Clear actions)
+    server.get('/api/logging', (req, res) => {
+      res.json({ loggingId });
+    });
+
+    server.post('/api/logging', (req, res) => {
+      const { loggingId: newId } = req.body || {};
+      loggingId = (newId || '').trim();
+      store.set('loggingId', loggingId);
+      res.json({ message: 'Logging ID updated', loggingId });
+    });
+
+    server.delete('/api/logging', (req, res) => {
+      loggingId = '';
+      store.set('loggingId', loggingId);
+      res.json({ message: 'Logging ID cleared', loggingId });
     });
 
     server.post('/api/setImageRefresh', async (req, res) => {
@@ -255,6 +293,94 @@ const require = createRequire(import.meta.url);
       }
     });
 
+    // Diagnostics + banner helpers
+    function setErrorBanner(message) {
+      statusBanner = { message: String(message || 'An error occurred.'), type: 'error', lastUpdated: new Date().toISOString() };
+    }
+    function clearBanner() {
+      statusBanner = { message: '', type: 'ok', lastUpdated: new Date().toISOString() };
+    }
+    // Helper: redact secrets in URLs before logging
+    function redactUrl(url) {
+      if (!url) return url;
+      // Hide IFTTT key or token-like segments
+      return url
+        .replace(/(with\/key\/)[^\/]+/i, '$1****')
+        .replace(/([?&]key=)[^&#]+/i, '$1****')
+        .replace(/([?&]token=)[^&#]+/i, '$1****');
+    }
+    // Route success to dataSuccess/imagesSuccess; consolidate all errors to 'error'
+    // channel: 'images' to send to imagesSuccess; anything else (or omitted) -> dataSuccess on success
+    async function sendDiagnostics(eventName, payload = {}, channel) {
+      if (!loggingId) {
+        console.log(`[diagnostics] Skipping (no loggingId). event=${eventName}`);
+        return;
+      }
+      try {
+        const isSuccess = eventName.includes('_success_');
+        const isWarning = eventName.includes('_warning_');
+        const eventType = isSuccess
+          ? ((channel === 'images' || payload?.scope === 'image' || payload?.scope === 'images') ? 'imagesSuccess' : 'dataSuccess')
+          : (isWarning ? 'warning' : 'error');
+        const url = getWebhookUrl(loggingId, eventType);
+        if (!url) {
+          console.warn(`[diagnostics] No webhook URL mapped for type=${eventType}. id=${loggingId}`);
+          return;
+        }
+
+        const event = eventName.replace('{id}', loggingId);
+        const nowIso = new Date().toISOString();
+
+        // Build a normalized error/warning block when not success
+        const normalizedError = !isSuccess ? {
+          message: String(payload?.error || payload?.message || 'Unknown error'),
+          scope: String(payload?.scope || channel || 'unknown'),
+          timestamp: nowIso
+        } : undefined;
+
+        const body = {
+          event,
+          id: loggingId,
+          timestamp: nowIso,
+          type: eventType,
+          payload,
+          ...(normalizedError ? { error: normalizedError } : {})
+        };
+
+        console.log(`[diagnostics] POST ${redactUrl(url)} type=${eventType} id=${loggingId} eventName=${event}`);
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'User-Agent': 'nws-xml-diagnostics' },
+          body: JSON.stringify(body),
+          timeout: 10000
+        });
+        console.log(`[diagnostics] Response status ${resp.status} for type=${eventType}`);
+      } catch {
+        // swallow diagnostics errors
+      }
+    }
+
+    // Hook console.warn to emit warning diagnostics (avoid recursion on internal diagnostics logs)
+    (() => {
+      const origWarn = console.warn.bind(console);
+      console.warn = (...args) => {
+        try {
+          origWarn(...args);
+          const msg = args.map(a => {
+            if (a instanceof Error) return a.message;
+            if (typeof a === 'string') return a;
+            try { return JSON.stringify(a); } catch { return String(a); }
+          }).join(' ');
+          if (!loggingId) return;
+          if (msg.includes('[diagnostics]')) return; // ignore internal diagnostics logs
+          // fire-and-forget
+          sendDiagnostics('nws_xml_warning_{id}', { scope: 'log', message: msg });
+        } catch {
+          // ignore
+        }
+      };
+    })();
+
     // Utility to convert Celsius to Fahrenheit
     function convertCtoF(valueWithUnit) {
       // Check if the input contains 'C'
@@ -318,7 +444,10 @@ const require = createRequire(import.meta.url);
           
           if (!pointResponse.ok) {
             if (pointResponse.status === 404) {
-              throw new Error(`Location not found in NWS system (${latitude}, ${longitude})`);
+              const msg = `Location not found in NWS system for coordinates ${latitude}, ${longitude}`;
+              console.warn(msg); // console.warn hook will emit a warning webhook
+              // Return a special object to indicate 404/warning
+              return { errorType: 'warning', message: msg };
             } else if (pointResponse.status >= 500) {
               throw new Error(`NWS server error: ${pointResponse.status} ${pointResponse.statusText}`);
             } else {
@@ -418,12 +547,17 @@ const require = createRequire(import.meta.url);
           }
           
           console.log(`NWS data fetched successfully for ${latitude}, ${longitude}`);
-          return { forecastData, hourlyData, currentData };
+          return { errorType: 'none', forecastData, hourlyData, currentData };
           
         } catch (error) {
           lastError = error;
           console.warn(`NWS data fetch attempt ${attempt} failed: ${error.message}`);
           
+          // Do not retry warning-classified errors
+          if (error?.isWarning || error?.name === 'NWSWarning') {
+            return { errorType: 'warning', message: error.message };
+          }
+
           if (attempt < maxRetries) {
             const delay = attempt * 3000; // Increasing delay: 3s, 6s, 9s
             console.log(`Waiting ${delay}ms before retry...`);
@@ -433,8 +567,8 @@ const require = createRequire(import.meta.url);
       }
       
       // All attempts failed
-      console.error(`Failed to fetch NWS data after ${maxRetries} attempts: ${lastError.message}`);
-      return null;
+      console.error(`Failed to fetch NWS data after ${maxRetries} attempts: ${lastError?.message}`);
+      return { errorType: 'error', message: lastError?.message || 'Unknown error' };
     }
 
     // Format the hourly forecast based on absolute and relative time
@@ -746,6 +880,7 @@ const require = createRequire(import.meta.url);
       console.log(`Starting weather data poll for ${urlConfig.length} location(s)`);
       let successCount = 0;
       let errorCount = 0;
+      let firstErrorMessage = '';
 
       function sanitizeFileName(value) {
         return value.replace(/[\/\\,:.]/g, '-');
@@ -755,15 +890,23 @@ const require = createRequire(import.meta.url);
         const { latitude, longitude, name } = entry;
         try {
           console.log(`Polling NWS data for ${name} at ${latitude}, ${longitude}`);
-          const data = await fetchNWSData(latitude, longitude);
+          const result = await fetchNWSData(latitude, longitude);
           
-          if (!data) {
+          if (result.errorType === 'warning') {
+            // Warning (404) was already logged and a warning webhook sent via console.warn hook
+            // Don't increment error count, don't set error banner, just continue
+            console.log(`Skipping location ${name} due to warning: ${result.message}`);
+            continue;
+          } else if (result.errorType === 'error') {
+            // True error after retries
             errorCount++;
-            await createErrorFiles(name, 'Failed to fetch weather data from NWS API');
+            if (!firstErrorMessage) firstErrorMessage = `Failed to fetch weather data for ${name}`;
+            await sendDiagnostics('nws_xml_error_{id}', { scope: 'weather', location: name, error: result.message });
             continue;
           }
-
-          const { forecastData, hourlyData, currentData } = data;
+          
+          // Unpack the successful data
+          const { forecastData, hourlyData, currentData } = result;
           
           // Validate that we have the minimum required data
           if (!hourlyData?.properties?.periods || !forecastData?.properties?.periods) {
@@ -807,7 +950,7 @@ const require = createRequire(import.meta.url);
             currentXml = `<CurrentConditions><Error>Current conditions unavailable</Error><Timestamp>${new Date().toISOString()}</Timestamp></CurrentConditions>`;
           }
 
-          // Write files with error handling
+          // Write files (success path)
           const sanitizedFileName = sanitizeFileName(name);
           const fileOperations = [
             writeFile(`${sanitizedFileName}-HourlyForecast.xml`, hourlyXml),
@@ -823,26 +966,50 @@ const require = createRequire(import.meta.url);
           console.log(`Data for ${name} written successfully.`);
           
         } catch (error) {
+          // Distinguish warning-classified errors from real errors
+          if (error?.isWarning || error?.name === 'NWSWarning') {
+            console.warn(`Warning polling data for ${name}: ${error.message}`);
+            // Do not count as error, do not set banner or send error webhook.
+            continue;
+          }
+
           errorCount++;
           console.error(`Error polling data for ${name}:`, error.message);
-          await createErrorFiles(name, error.message);
+          if (!firstErrorMessage) firstErrorMessage = `Weather data error for ${name}: ${error.message}`;
+          await sendDiagnostics('nws_xml_error_{id}', { scope: 'weather', location: name, error: error.message });
         }
       }
       
       // Poll alerts after processing all weather locations
       try {
-        await pollAlertsForLocations();
+        const alertsOk = await pollAlertsForLocations();
+        if (!alertsOk && !firstErrorMessage) {
+          firstErrorMessage = 'Alerts fetch error';
+        }
       } catch (error) {
         console.error('Error polling alerts:', error.message);
+        if (!firstErrorMessage) firstErrorMessage = `Alerts error: ${error.message}`;
+        await sendDiagnostics('nws_xml_error_{id}', { scope: 'alerts', error: error.message });
       }
       
-      // Generate graphic names XML after all weather data is processed
+      // Generate graphic names XML after weather data
       try {
         await generateGraphicNamesXML();
       } catch (error) {
         console.error('Error generating graphic names:', error.message);
+        if (!firstErrorMessage) firstErrorMessage = `Graphic names error: ${error.message}`;
+        await sendDiagnostics('nws_xml_error_{id}', { scope: 'graphics', error: error.message });
       }
       
+      // Clear banner and send success if full success, otherwise set banner
+      if (errorCount === 0 && !firstErrorMessage) {
+        clearBanner();
+        console.log(`[diagnostics] Weather poll successful for ${urlConfig.length} location(s). Sending success webhook...`);
+        await sendDiagnostics('nws_xml_success_{id}', { scope: 'weather', locations: urlConfig.length }, 'data');
+      } else {
+        setErrorBanner(firstErrorMessage);
+      }
+
       console.log(`Weather poll completed: ${successCount} successful, ${errorCount} failed`);
       setTimeout(poll, pollInterval);
     }
@@ -855,36 +1022,17 @@ const require = createRequire(import.meta.url);
 
     async function createErrorFiles(locationName, errorMessage) {
       try {
-        function sanitizeFileName(value) {
-          return value.replace(/[\/\\,:.]/g, '-');
-        }
-        
-        const sanitizedFileName = sanitizeFileName(locationName);
-        const timestamp = new Date().toISOString();
-        const errorContent = `<Error><Message>${errorMessage}</Message><Timestamp>${timestamp}</Timestamp><Location>${locationName}</Location></Error>`;
-        
-        // Create error files for all expected forecast types
-        const errorFiles = [
-          `${sanitizedFileName}-HourlyForecast.xml`,
-          `${sanitizedFileName}-DayAndNightForecast-BySpecificDate.xml`,
-          `${sanitizedFileName}-DayAndNightForecast-ByDaysOut.xml`,
-          `${sanitizedFileName}-DailyForecast-BySpecificDate.xml`,
-          `${sanitizedFileName}-DailyForecast-ByDaysOut.xml`,
-          `${sanitizedFileName}-CurrentConditions.xml`
-        ];
-        
-        await fs.mkdir(path.join(userDocumentsPath, 'NWSForecastXMLFiles'), { recursive: true });
-        
-        for (const filename of errorFiles) {
-          await writeFile(filename, errorContent);
-        }
-        
-        console.log(`Error files created for ${locationName}`);
+        // Changed behavior: never write error files; keep existing files untouched
+        const message = `Error for ${locationName}: ${errorMessage}`;
+        console.log(`Skipping error file creation. ${message}`);
+        await sendDiagnostics('nws_xml_error_{id}', { scope: 'weather', location: locationName, error: errorMessage });
+        setErrorBanner(message);
       } catch (writeError) {
-        console.error(`Failed to create error files for ${locationName}:`, writeError.message);
+        console.error(`Diagnostics/banner update failed for ${locationName}:`, writeError.message);
       }
     }
 
+    
     function getDayName(dayNumber) {
       const today = new Date();
       const targetDate = new Date(today);
@@ -1046,22 +1194,10 @@ const require = createRequire(import.meta.url);
         }
       }
       
-      // All attempts failed, create error file
+      // All attempts failed: no error file; leave existing file, send diagnostics, set banner
       console.error(`Failed to download image ${filename} after ${maxRetries} attempts: ${lastError.message}`);
-      
-      try {
-        const errorFilename = filename.replace(/\.[^/.]+$/, '') + '_ERROR.txt';
-        const errorFilePath = path.join(userDocumentsPath, 'ForecastImages', errorFilename);
-        const errorMessage = `Image Download Failed\n\nFilename: ${filename}\nURL: ${url}\nTimestamp: ${new Date().toISOString()}\nError: ${lastError.message}\n\nThe image source may be temporarily unavailable.`;
-        
-        await fs.mkdir(path.dirname(errorFilePath), { recursive: true });
-        await fs.writeFile(errorFilePath, errorMessage);
-        
-        console.log(`Error details saved to: ${errorFilePath}`);
-      } catch (writeError) {
-        console.error('Failed to write image error file:', writeError.message);
-      }
-      
+      await sendDiagnostics('nws_xml_error_{id}', { scope: 'image', filename, url, error: lastError.message });
+      setErrorBanner(`Image download failed for ${filename}: ${lastError.message}`);
       return false;
     }
 
@@ -1139,9 +1275,12 @@ const require = createRequire(import.meta.url);
           // Ensure the directory exists
           await fs.mkdir(path.dirname(filePath), { recursive: true });
           
+          // Define imageSrc in the outer scope so it's available in the catch block
+          let imageSrc;
+          
           try {
             // First try to get the image source URL and download it directly
-            const imageSrc = await imageElement.evaluate(img => img.src);
+            imageSrc = await imageElement.evaluate(img => img.src);
             
             if (imageSrc && imageSrc.startsWith('http')) {
               console.log(`Downloading Arkansas burn ban image directly from: ${imageSrc}`);
@@ -1170,7 +1309,7 @@ const require = createRequire(import.meta.url);
               throw new Error('Image source URL not found or invalid');
             }
           } catch (downloadError) {
-            console.warn(`Direct download failed: ${downloadError.message}, falling back to screenshot`);
+            console.warn(`Direct download failed: ${downloadError.message}, URL: ${imageSrc || 'unknown'}, falling back to screenshot`);
             
             // Fallback to screenshot with transparent background
             await imageElement.screenshot({ 
@@ -1193,41 +1332,26 @@ const require = createRequire(import.meta.url);
         
       } catch (error) {
         console.error('Error capturing Arkansas burn ban map:', error.message);
-        
-        // Create an error placeholder image if capture fails
-        try {
-          const errorFilename = 'Arkansas_Burn_Ban_ERROR.txt';
-          const errorFilePath = path.join(userDocumentsPath, 'ForecastImages', errorFilename);
-          const errorMessage = `Arkansas Burn Ban Capture Failed\n\nTimestamp: ${new Date().toISOString()}\nError: ${error.message}\n\nThe Arkansas burn ban website may be temporarily unavailable.`;
-          
-          await fs.mkdir(path.dirname(errorFilePath), { recursive: true });
-          await fs.writeFile(errorFilePath, errorMessage);
-          
-          console.log(`Error details saved to: ${errorFilePath}`);
-        } catch (writeError) {
-          console.error('Failed to write error file:', writeError.message);
-        }
+        // no error file; leave existing file, send diagnostics, set banner
+        await sendDiagnostics('nws_xml_error_{id}', { scope: 'image', filename: 'Arkansas_Burn_Ban.png', error: error.message });
+        setErrorBanner(`Arkansas burn ban capture failed: ${error.message}`);
       } finally {
-        // Always close the browser, even if there was an error
         if (browser) {
-          try {
-            await browser.close();
-          } catch (closeError) {
-            console.error('Error closing browser:', closeError.message);
-          }
+          try { await browser.close(); } catch (closeError) { console.error('Error closing browser:', closeError.message); }
         }
       }
     }
 
     async function pollImages() {
       console.log('Polling images...');
+      let imageErrors = 0;
       
-      // Capture Arkansas burn ban map if enabled
       if (enableArkansasBurnBan) {
         await captureArkansasBurnBan();
+        // captureArkansasBurnBan sets banner/diagnostics internally on error but we don't have a return
+        // We conservatively infer errors via banner type change is too implicit; leave as-is.
       }
       
-      // Process regular image configurations
       for (const entry of imageConfig) {
         const { url, name } = entry;
         try {
@@ -1236,15 +1360,26 @@ const require = createRequire(import.meta.url);
           const extension = urlParts.length > 1 ? '.' + urlParts.pop() : '.jpg';
           const filename = name + extension;
           
-          await downloadImage(url, filename);
+          const ok = await downloadImage(url, filename);
+          if (!ok) imageErrors++;
         } catch (error) {
           console.error(`Error processing image ${name}:`, error);
+          imageErrors++;
+          await sendDiagnostics('nws_xml_error_{id}', { scope: 'image', name, url, error: error.message });
+          setErrorBanner(`Image error for ${name}: ${error.message}`);
         }
       }
-      
+
+      // Clear banner and send success if all images ok
+      if (imageErrors === 0) {
+        clearBanner();
+        console.log(`[diagnostics] Image poll successful for ${imageConfig.length} image(s), burnBan=${enableArkansasBurnBan}. Sending success webhook...`);
+        await sendDiagnostics('nws_xml_success_{id}', { scope: 'images', images: imageConfig.length, arkansasBurnBan: enableArkansasBurnBan }, 'images');
+      }
+
       setTimeout(pollImages, imagePollInterval);
     }
-
+    
     async function startImagePolling() {
       if (imageConfig.length === 0 && !enableArkansasBurnBan) {
         console.log("No images or Arkansas burn ban configured for polling.");
@@ -1356,25 +1491,32 @@ const require = createRequire(import.meta.url);
 
     // Main function to fetch and write alert XMLs for each location
     async function pollAlertsForLocations() {
-      if (!urlConfig || urlConfig.length === 0) return;
+      if (!urlConfig || urlConfig.length === 0) return true;
 
+      let hadErrors = false;
       const userAgent = 'github.com/brandonemlaw-nws-xml';
       for (const entry of urlConfig) {
         const { latitude, longitude, name } = entry;
         try {
-          // Query alerts for this point
           const url = `https://api.weather.gov/alerts/active?point=${latitude},${longitude}`;
           const response = await fetch(url, { headers: { 'User-Agent': userAgent } });
           if (!response.ok) {
-            console.error(`Failed to fetch alerts for ${name}: ${response.statusText}`);
-            // Still create placeholder files even if fetch fails
-            await createPlaceholderAlertFiles(name);
+            const statusMsg = `HTTP ${response.status}`;
+            if (response.status >= 400 && response.status < 500) {
+              // Treat 4xx (e.g., 400 Bad Request) as warning; do not mark as error
+              console.warn(`Failed to fetch alerts for ${name}: ${response.statusText}`);
+              // console.warn hook will emit warning webhook; do not duplicate here.
+            } else {
+              console.error(`Failed to fetch alerts for ${name}: ${response.statusText}`);
+              hadErrors = true;
+              await sendDiagnostics('nws_xml_error_{id}', { scope: 'alerts', location: name, error: statusMsg });
+            }
             continue;
           }
           const data = await response.json();
           if (!data.features || !Array.isArray(data.features)) {
-            // No alerts data, create placeholders
-            await createPlaceholderAlertFiles(name);
+            // Treat as no alerts only if we got a valid response object; write placeholders
+            await createNoAlertFiles(name);
             continue;
           }
 
@@ -1392,12 +1534,11 @@ const require = createRequire(import.meta.url);
             }
           }
 
-          // Write XML for ALL alert types (active alerts or placeholders)
+          // Write XML for ALL alert types: if active exists write it, else write "No alert in effect"
           for (const [alertTypeKey, alertTypeValue] of Object.entries(ALERT_TYPE_MAP)) {
             const key = alertTypeValue;
             const displayName = ALERT_TYPE_DISPLAY_NAMES[key];
             let xmlObj;
-            
             if (latestAlerts[key]) {
               // Active alert found
               const alert = latestAlerts[key];
@@ -1464,14 +1605,16 @@ const require = createRequire(import.meta.url);
           }
         } catch (err) {
           console.error(`Error processing alerts for ${name}:`, err);
-          // Still create placeholder files even if there's an error
-          await createPlaceholderAlertFiles(name);
+          // Changed: do not write placeholders on unexpected error; keep existing files
+          hadErrors = true;
+          await sendDiagnostics('nws_xml_error_{id}', { scope: 'alerts', location: name, error: err.message });
         }
       }
+      return !hadErrors;
     }
 
-    // Helper function to create placeholder alert files when no data is available
-    async function createPlaceholderAlertFiles(locationName) {
+    // Helper: create "No alert in effect" files (used only when fetch ok but zero/invalid features)
+    async function createNoAlertFiles(locationName) {
       for (const [alertTypeKey, alertTypeValue] of Object.entries(ALERT_TYPE_MAP)) {
         const key = alertTypeValue;
         const displayName = ALERT_TYPE_DISPLAY_NAMES[key];
@@ -1499,11 +1642,8 @@ const require = createRequire(import.meta.url);
             Raw: ''
           }
         };
-        
         const builder = new xml2js.Builder(xmlBuilderOptions);
         const xml = builder.buildObject(xmlObj);
-
-        // Sanitize file name (still using the key for consistency)
         const sanitizeFileName = (s) => s.replace(/[\/\\,:.]/g, '-').replace(/\s+/g, '_');
         const fileName = `${sanitizeFileName(locationName)}-${key}-Alert.xml`;
         await writeFile(fileName, xml);

@@ -1160,36 +1160,6 @@ autoUpdater.autoDownload = false;
         textOutput += `Generated: ${new Date().toLocaleString()}\n\n`;
         
         graphicNameTemplates.forEach((template, index) => {
-          let finalTagName = sanitizedTagName;
-          let counter = 1;
-          while (graphicNames[finalTagName]) {
-            finalTagName = sanitizedTagName + '_' + counter;
-            counter++;
-          }
-          
-          graphicNames[finalTagName] = graphicName;
-        });
-        
-        // Build XML
-        const builder = new xml2js.Builder({ 
-          ...xmlBuilderOptions,
-          renderOpts: { 'pretty': true, 'indent': '  ', 'newline': '\n' }
-        });
-        const xml = builder.buildObject({ GraphicNames: graphicNames });
-        
-        // Write to file
-        const filePath = path.join(userDocumentsPath, 'NWSForecastXMLFiles', 'GraphicNames.xml');
-        await fs.mkdir(path.dirname(filePath), { recursive: true });
-        await fs.writeFile(filePath, xml);
-        
-        console.log(`Graphic names XML written to ${filePath}`);
-        
-        // Also create a simple text version for easy reading
-        let textOutput = 'Generated Graphic Names\n';
-        textOutput += '=====================\n';
-        textOutput += `Generated: ${new Date().toLocaleString()}\n\n`;
-        
-        graphicNameTemplates.forEach((template, index) => {
           const { dayNumber, nameTemplate } = template;
           const dayName = getDayName(dayNumber);
           const graphicName = nameTemplate.replace(/\{day\}/g, dayName);
@@ -1797,7 +1767,7 @@ autoUpdater.autoDownload = false;
           updateStatus = { ...updateStatus, state: 'downloading', progress };
         });
 
-        autoUpdater.on('update-downloaded', (info) => {
+        autoUpdater.on('update-downloaded', async (info) => {
           console.log('[updater] Update downloaded:', info?.version);
           updateStatus = { ...updateStatus, state: 'downloaded', info };
           // From UI, call /api/update/install to apply

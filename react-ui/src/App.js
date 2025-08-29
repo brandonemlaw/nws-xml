@@ -139,8 +139,13 @@ function App() {
   // Handle manual image refresh
   const handleImageRefresh = (e) => {
     e.preventDefault();
+    showSuccess('Refreshing images...');
     axios.post('/api/refreshImages', {})
-      .catch(error => console.error('Error refreshing images:', error));
+      .then(() => showSuccess('Image refresh initiated'))
+      .catch(error => {
+        console.error('Error refreshing images:', error);
+        showError('Failed to refresh images. Please check your connection.');
+      });
   };
 
   // Handle adding a new image

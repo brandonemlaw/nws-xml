@@ -166,7 +166,7 @@ const { autoUpdater } = require('electron-updater');
 
     server.post('/api/refreshImages', (req, res) => {
       pollImages();
-      res.status(200).send();
+      res.json({ message: 'Image refresh initiated' });
     });
 
     server.post('/api/config', async (req, res) => {

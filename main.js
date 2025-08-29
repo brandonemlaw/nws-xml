@@ -438,6 +438,24 @@ autoUpdater.autoDownload = false;
       };
     })();
 
+    // Helper to render release notes as plain text (handles string or array format)
+    function normalizeReleaseNotes(info) {
+      const rn = info && info.releaseNotes;
+      if (!rn) return '';
+      if (typeof rn === 'string') return rn;
+      if (Array.isArray(rn)) {
+        return rn
+          .map((n) => {
+            const ver = n.version ? `Version ${n.version}\n` : '';
+            const note = typeof n.note === 'string' ? n.note : '';
+            return `${ver}${note}`.trim();
+          })
+          .filter(Boolean)
+          .join('\n\n');
+      }
+      return '';
+    }
+
     // Utility to convert Celsius to Fahrenheit
     function convertCtoF(valueWithUnit) {
       // Check if the input contains 'C'
@@ -1740,44 +1758,58 @@ autoUpdater.autoDownload = false;
         autoUpdater.on('checking-for-update', () => {
           console.log('[updater] Checking for update...');
           updateStatus = { ...updateStatus, state: 'checking', lastChecked: new Date().toISOString(), lastError: null };
+          // Optional: surface a small banner while checking
+          statusBanner = { message: 'Checking for updates...', type: 'ok', lastUpdated: new Date().toISOString() };
         });
 
-        autoUpdater.on('update-available', (info) => {
+        autoUpdater.on('update-available', async (info) => {
           console.log('[updater] Update available:', info?.version);
           updateStatus = { ...updateStatus, state: 'available', info, lastChecked: new Date().toISOString(), lastError: null };
-          // Optional telemetry
-          sendDiagnostics('nws_xml_success_{id}', { scope: 'updater', event: 'available', version: info?.version }, 'data').catch(() => {});
+
+          const MAX_NOTES_LEN = 1400;
+          const notes = normalizeReleaseNotes(info).slice(0, MAX_NOTES_LEN);
+          const message = `Update ${info?.version} available.\n${notes || ''}`.trim();
+          statusBanner = { message, type: 'ok', lastUpdated: new Date().toISOString() };
+
+          // ...existing diagnostics if any...
         });
 
         autoUpdater.on('update-not-available', (info) => {
           console.log('[updater] Update not available. Current version is up to date.');
           updateStatus = { ...updateStatus, state: 'not-available', info, lastChecked: new Date().toISOString(), lastError: null, progress: null };
+          statusBanner = { message: 'You are up to date.', type: 'ok', lastUpdated: new Date().toISOString() };
         });
 
         autoUpdater.on('error', (err) => {
           console.error('[updater] Update error:', err?.message || String(err));
           updateStatus = { ...updateStatus, state: 'error', lastError: err?.message || String(err) };
-          sendDiagnostics('nws_xml_error_{id}', { scope: 'updater', error: err?.message || String(err) }).catch(() => {});
+          statusBanner = { message: `Update error: ${err?.message || String(err)}`, type: 'error', lastUpdated: new Date().toISOString() };
+          // ...existing diagnostics if any...
         });
-
-
 
         autoUpdater.on('download-progress', (progress) => {
           console.log(`[updater] Download progress: ${Math.round(progress.percent)}%`);
           updateStatus = { ...updateStatus, state: 'downloading', progress };
+          statusBanner = { message: `Downloading update... ${Math.round(progress.percent)}%`, type: 'ok', lastUpdated: new Date().toISOString() };
         });
 
         autoUpdater.on('update-downloaded', async (info) => {
           console.log('[updater] Update downloaded:', info?.version);
           updateStatus = { ...updateStatus, state: 'downloaded', info };
+
+          const MAX_NOTES_LEN = 1400;
+          const notes = normalizeReleaseNotes(info).slice(0, MAX_NOTES_LEN);
+          const message = `Update ${info?.version} downloaded. Use Install in the app to restart.\n${notes || ''}`.trim();
+          statusBanner = { message, type: 'ok', lastUpdated: new Date().toISOString() };
+
           // From UI, call /api/update/install to apply
         });
 
         console.log('[updater] Auto-updater initialized successfully');
-
       } catch (e) {
         console.error('[updater] AutoUpdater init failed:', e.message);
         updateStatus = { ...updateStatus, state: 'error', lastError: e.message };
+        statusBanner = { message: `Update init failed: ${e.message}`, type: 'error', lastUpdated: new Date().toISOString() };
       }
     }
 

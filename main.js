@@ -12,7 +12,10 @@ import puppeteer from 'puppeteer';
 import { createRequire } from 'module';
 import { getWebhookUrl } from './loggerLookup.js';
 
+// Initialize require before any usage
 const require = createRequire(import.meta.url);
+// Require CommonJS electron-updater safely after createRequire
+const { autoUpdater } = require('electron-updater');
 
 (async () => {
   try {
@@ -34,6 +37,9 @@ const require = createRequire(import.meta.url);
     let loggingId = store.get('loggingId', '');
     // New: in-memory status banner (error banner cleared on success)
     let statusBanner = { message: '', type: 'ok', lastUpdated: null };
+    // New: in-memory update status for UI-driven updates (no popups)
+    // states: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
+    let updateStatus = { state: 'idle', info: null, progress: null, lastChecked: null, lastError: null };
 
     server.use(bodyParser.json());
     server.use(express.static(path.join(__dirname, 'react-ui', 'build')));
@@ -68,7 +74,9 @@ const require = createRequire(import.meta.url);
         graphicNameTemplates,
         // New fields for UI consumption
         loggingId,
-        statusBanner
+        statusBanner,
+        // New: expose update status in config fetch if desired by UI
+        updateStatus
       });
     });
       
@@ -82,6 +90,48 @@ const require = createRequire(import.meta.url);
     // New: status endpoint for banner polling
     server.get('/api/status', (req, res) => {
       res.json(statusBanner);
+    });
+
+    // New: Update endpoints (UI-driven; no dialogs)
+    server.get('/api/update/status', (req, res) => {
+      res.json(updateStatus);
+    });
+
+    server.post('/api/update/check', async (req, res) => {
+      try {
+        updateStatus = { ...updateStatus, state: 'checking', lastChecked: new Date().toISOString(), lastError: null };
+        // Fire and forget; result will come via event handlers
+        autoUpdater.checkForUpdates().catch(() => {});
+        res.json({ message: 'Checking for updates' });
+      } catch (e) {
+        updateStatus = { ...updateStatus, state: 'error', lastError: e.message };
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    server.post('/api/update/download', async (req, res) => {
+      try {
+        updateStatus = { ...updateStatus, state: 'downloading', lastError: null };
+        autoUpdater.downloadUpdate().catch(() => {});
+        res.json({ message: 'Downloading update' });
+      } catch (e) {
+        updateStatus = { ...updateStatus, state: 'error', lastError: e.message };
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    server.post('/api/update/install', async (req, res) => {
+      try {
+        // Return immediately so the UI can transition; app will quit and install
+        res.json({ message: 'Installing update and restarting' });
+        setTimeout(() => {
+          // Quit and install, silently
+          autoUpdater.quitAndInstall(false, true);
+        }, 200);
+      } catch (e) {
+        updateStatus = { ...updateStatus, state: 'error', lastError: e.message };
+        res.status(500).json({ error: e.message });
+      }
     });
 
     // New: Logging ID management endpoints (for UI button and Save/Clear actions)
@@ -1666,6 +1716,54 @@ const require = createRequire(import.meta.url);
       return !!value && value !== 'false' && value !== '0';
     }
 
+    // New: Wire electron-updater (Windows/NSIS only)
+    function initAutoUpdater() {
+      try {
+        // Do not auto-download; UI will control when to download/apply
+        autoUpdater.autoDownload = false;
+        autoUpdater.autoInstallOnAppQuit = false;
+        autoUpdater.allowDowngrade = false;
+        autoUpdater.allowPrerelease = false;
+
+        autoUpdater.on('checking-for-update', () => {
+          updateStatus = { ...updateStatus, state: 'checking', lastChecked: new Date().toISOString(), lastError: null };
+        });
+
+        autoUpdater.on('update-available', (info) => {
+          updateStatus = { ...updateStatus, state: 'available', info, lastChecked: new Date().toISOString(), lastError: null };
+          // Optional telemetry
+          sendDiagnostics('nws_xml_success_{id}', { scope: 'updater', event: 'available', version: info?.version }, 'data').catch(() => {});
+        });
+
+        autoUpdater.on('update-not-available', (info) => {
+          updateStatus = { ...updateStatus, state: 'not-available', info, lastChecked: new Date().toISOString(), lastError: null, progress: null };
+        });
+
+        autoUpdater.on('error', (err) => {
+          updateStatus = { ...updateStatus, state: 'error', lastError: err?.message || String(err) };
+          sendDiagnostics('nws_xml_error_{id}', { scope: 'updater', error: err?.message || String(err) }).catch(() => {});
+        });
+
+        autoUpdater.on('download-progress', (progress) => {
+          updateStatus = { ...updateStatus, state: 'downloading', progress };
+        });
+
+        autoUpdater.on('update-downloaded', (info) => {
+          updateStatus = { ...updateStatus, state: 'downloaded', info };
+          // From UI, call /api/update/install to apply
+        });
+
+        // Background check every 6 hours; does not auto-download
+        setInterval(() => {
+          autoUpdater.checkForUpdates().catch(() => {});
+        }, 6 * 60 * 60 * 1000);
+
+      } catch (e) {
+        console.error('AutoUpdater init failed:', e.message);
+        updateStatus = { ...updateStatus, state: 'error', lastError: e.message };
+      }
+    }
+
     app.on('ready', () => {
       console.log('Electron app is ready.');
 
@@ -1685,6 +1783,10 @@ const require = createRequire(import.meta.url);
       win.loadURL(`http://localhost:${PORT}`);
       startPolling();
       startImagePolling();
+
+      // New: initialize updater and kick one initial check (non-blocking, no popup)
+      initAutoUpdater();
+      autoUpdater.checkForUpdates().catch(() => {});
     });
 
     app.on('window-all-closed', () => {
@@ -1694,6 +1796,7 @@ const require = createRequire(import.meta.url);
     });
 
   } catch (error) {
+
     console.error('Error during initialization:', error);
   }
 })();

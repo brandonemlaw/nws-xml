@@ -9,10 +9,28 @@
     "start": "electron .",
     "postinstall": "electron-builder install-app-deps",
     "release": "electron-builder --mac --windows --linux --publish always",
-    "publishwin": "electron-builder --win --config --ia32"
+    "publishwin": "electron-builder -w nsis --x64 --publish never"
   },
   "build": {
     "appId": "nws-xml-converter",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "brandonemlaw",
+        "repo": "nws-xml"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "differentialPackage": true
+    },
     "mac": {
       "category": "productivity"
     },
@@ -28,6 +46,7 @@
     "adm-zip": "^0.5.16",
     "dmg-license": "^1.0.11",
     "electron-store": "^10.0.0",
+    "electron-updater": "^6.3.9",
     "express": "^4.21.0",
     "googleapis": "^144.0.0",
     "node-fetch": "^3.3.2",
